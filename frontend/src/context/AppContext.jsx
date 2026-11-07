@@ -13,9 +13,18 @@ const loadData = (key, fallback) => {
   }
 };
 
+const loadNotifications = () => {
+  const saved = loadData("payleak-notifications", demoNotifications);
+  const active = saved.filter((notification) => notification.title !== "Compare withdrawal routes");
+  if (active.length !== saved.length) {
+    localStorage.setItem("payleak-notifications", JSON.stringify(active));
+  }
+  return active;
+};
+
 export function AppProvider({ children }) {
   const [invoices, setInvoices] = useState(() => loadData("payleak-invoices", demoInvoices));
-  const [notifications, setNotifications] = useState(() => loadData("payleak-notifications", demoNotifications));
+  const [notifications, setNotifications] = useState(loadNotifications);
   const transactions = demoTransactions;
 
   const persistInvoices = (next) => {
