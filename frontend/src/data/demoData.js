@@ -23,7 +23,6 @@ export const demoInvoices = [
 export const demoNotifications = [
   { id: 1, category: "Invoice", title: "Invoice INV-2026-040 is overdue", body: "Mira Chen · $1,250.00 USD · due Oct 16", time: "12 min ago", unread: true },
   { id: 2, category: "Financial alert", title: "Higher conversion cost detected", body: "Demo estimates show a 1.7% rate difference on TXN-80241.", time: "1 hour ago", unread: true },
-  { id: 3, category: "AI recommendation", title: "Compare withdrawal routes", body: "Review route estimates before your next conversion.", time: "Yesterday", unread: true },
   { id: 4, category: "Payment", title: "Payment received from Northstar Studio", body: "Invoice INV-2026-041 · $2,400.00 USD", time: "Yesterday", unread: false },
   { id: 5, category: "Invoice", title: "Invoice INV-2026-039 is overdue", body: "Brightline Media · €980.00 EUR · due Oct 11", time: "Oct 11", unread: false },
   { id: 6, category: "Payment", title: "Payment completed", body: "TXN-80238 · $1,250.00 USD", time: "Nov 3", unread: false },

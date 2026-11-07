@@ -8,7 +8,6 @@ const navigation = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard },
   { label: "Invoices", to: "/invoices", icon: FileText },
   { label: "Money leak analysis", to: "/leak-analysis", icon: Activity },
-  { label: "Route optimizer", to: "/route-optimizer", icon: WalletCards },
   { label: "AI assistant", to: "/ai-assistant", icon: Bot },
   { label: "Notifications", to: "/notifications", icon: Bell, count: true },
 ];

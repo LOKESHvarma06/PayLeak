@@ -13,12 +13,12 @@ npm run dev
 
 The frontend opens at Vite's local URL. Sign in with the prefilled demo account,
 then select **Continue with sample data** on the PayPal setup screen. All accounts,
-payments, invoices, route estimates, and AI responses in this prototype are
-fictional; it does not connect to PayPal or send money or email.
+payments, invoices, and AI responses in this prototype are fictional; it does not
+connect to PayPal or send money or email.
 
-The dashboard links to invoices, money leak analysis, route optimizer, AI assistant,
-notifications, and settings. Create an invoice to try the local draft extraction,
-preview, and confirmation flow. Use Settings to reset browser-local demo records.
+The dashboard links to invoices, money leak analysis, AI assistant, notifications,
+and settings. Create an invoice to try the local draft extraction, preview, and
+confirmation flow. Use Settings to reset browser-local demo records.
 
 ## Folder structure
 
@@ -35,10 +35,10 @@ identified demo fixtures.
 
 ## Why controllers and services are separate
 
-When the frontend requests a route comparison:
+The backend route comparison API remains available for future use:
 - `routeController.js` receives the request.
 - `routeOptimizationService.js` calculates the routes.
 - `RouteQuote.js` saves the result.
-- The controller returns JSON to the React UI.
+- The controller returns JSON to its API caller.
 
 This keeps HTTP code, business logic, and storage concerns separate.

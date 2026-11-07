@@ -16,7 +16,6 @@ export default function Dashboard() {
   const grossEarnings = transactions.reduce((sum, item) => sum + item.gross * (usdRates[item.currency] || 1), 0);
   const costs = getLeakTotals(transactions);
   const netEarnings = Math.max(0, grossEarnings - costs.fees - costs.conversion - costs.other);
-  const savingsEstimate = grossEarnings * 0.0195;
   const compactGross = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(grossEarnings);
   const earnings = getEarningsByMonth(transactions);
   const previousMonth = earnings.at(-2)?.gross || 0;
@@ -36,7 +35,7 @@ export default function Dashboard() {
         <StatCard label="Total earnings" value={money(grossEarnings)} change={`${Number(monthlyChange) >= 0 ? "+" : ""}${monthlyChange}%`} note="Monthly change · USD-equivalent demo data" icon={Wallet} tone="purple" />
         <StatCard label="Transaction fees" value={money(costs.fees)} note={`${transactions.length} sample transactions · USD equivalent`} icon={CircleDollarSign} tone="orange" />
         <StatCard label="Currency loss" value={money(costs.conversion)} note="Estimated · USD equivalent" icon={ArrowDownRight} tone="red" />
-        <StatCard label="Potential savings" value={money(savingsEstimate)} note="Illustrative alternative-route estimate" icon={Radar} tone="green" />
+        <StatCard label="Net earnings" value={money(netEarnings)} note="After estimated fees and currency loss · USD equivalent" icon={Wallet} tone="green" />
       </div>
 
       <div className="dashboard-chart-grid">
@@ -75,7 +74,6 @@ export default function Dashboard() {
           <Panel title="Financial insights" subtitle="A few things worth a look">
             <div className="insight-list">
               <Link to="/leak-analysis" className="insight-item"><span className="insight-icon orange"><ArrowUpRight size={17} /></span><span><b>Conversion costs moved up</b><small>Your demo estimates show a 1.7% rate difference.</small></span><ArrowRight size={15} /></Link>
-              <Link to="/route-optimizer" className="insight-item"><span className="insight-icon purple"><Radar size={17} /></span><span><b>Compare alternative routes</b><small>Explore illustrative route estimates before converting.</small></span><ArrowRight size={15} /></Link>
               <Link to="/invoices" className="insight-item"><span className="insight-icon red"><Lightbulb size={17} /></span><span><b>3 overdue invoices</b><small>Review reminders before following up with clients.</small></span><ArrowRight size={15} /></Link>
             </div>
           </Panel>
@@ -83,7 +81,6 @@ export default function Dashboard() {
             <div className="quick-actions">
               <Link to="/invoices/create"><FilePlus2 size={16} /> Create invoice</Link>
               <Link to="/leak-analysis"><Radar size={16} /> Analyze payments</Link>
-              <Link to="/route-optimizer"><ArrowRight size={16} /> Optimize routes</Link>
               <Link to="/ai-assistant"><Sparkles size={16} /> Ask AI assistant</Link>
             </div>
           </Panel>

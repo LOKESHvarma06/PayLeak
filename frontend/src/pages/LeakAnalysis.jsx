@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowDownRight, ArrowRight, Clock3, Info, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowDownRight, Clock3, Info, Sparkles, TriangleAlert } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import Panel from "../components/Panel.jsx";
 import { useAppData } from "../context/AppContext.jsx";
@@ -56,7 +56,6 @@ export default function LeakAnalysis() {
         </Panel>
         <Panel title="AI explanation" subtitle="Grounded in the selected demo transaction">
           <div className="ai-explanation"><div className="ai-bubble-icon"><Sparkles size={17} /></div><div><p>Your demo payment shows a transaction fee of <b>{formatOriginal(transaction.fee)}</b>. Compared with the selected reference rate, the estimated conversion difference is <b>{formatReceived(amounts.conversionLoss)}</b>. {transaction.otherFees ? `Other known demo costs add ${formatOriginal(transaction.otherFees)}.` : "No additional fees are included in this sample."}</p><small>Demo data only · Not verified PayPal or bank information</small></div></div>
-          <div className="savings-callout"><span className="savings-icon"><ArrowRight size={17} /></span><div><b>Explore a lower-cost route</b><p>Compare simulated alternatives and their assumptions before making any decision.</p><a href="/route-optimizer">Open route optimizer <ArrowRight size={13} /></a></div></div>
         </Panel>
       </div>
       <Panel title="Calculation details" subtitle="All conversion and reference values below are illustrative demo data." className="calculation-panel">

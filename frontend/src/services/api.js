@@ -12,7 +12,6 @@ export const endpoints = {
   invoices: "/invoices",
   analytics: "/analytics",
   leakAnalysis: "/analytics/leaks",
-  compareRoutes: "/routes/compare",
   chat: "/ai/chat",
   notifications: "/notifications",
   paypalConnect: "/paypal/connect",

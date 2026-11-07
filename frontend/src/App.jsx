@@ -12,7 +12,6 @@ const Invoices = lazy(() => import("./pages/Invoices.jsx"));
 const InvoiceDetails = lazy(() => import("./pages/InvoiceDetails.jsx"));
 const CreateInvoice = lazy(() => import("./pages/CreateInvoice.jsx"));
 const LeakAnalysis = lazy(() => import("./pages/LeakAnalysis.jsx"));
-const RouteOptimizer = lazy(() => import("./pages/RouteOptimizer.jsx"));
 const AIAssistant = lazy(() => import("./pages/AIAssistant.jsx"));
 const Notifications = lazy(() => import("./pages/Notifications.jsx"));
 const Settings = lazy(() => import("./pages/Settings.jsx"));
@@ -41,7 +40,6 @@ function AppRoutes() {
           <Route path="/invoices/create" element={<CreateInvoice />} />
           <Route path="/invoices/:invoiceId" element={<InvoiceDetails />} />
           <Route path="/leak-analysis" element={<LeakAnalysis />} />
-          <Route path="/route-optimizer" element={<RouteOptimizer />} />
           <Route path="/ai-assistant" element={<AIAssistant />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />

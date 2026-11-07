@@ -9,7 +9,7 @@ import { money } from "../data/demoData.js";
 
 const suggestions = [
   "Why did I lose money on my last transaction?",
-  "Which conversion route is cheapest?",
+  "How are my conversion costs calculated?",
   "How much money did I lose this month?",
   "Show me my overdue invoices.",
   "How can I reduce my payment fees?",
@@ -70,7 +70,7 @@ export default function AIAssistant() {
         <section className="chat-panel">
           <header className="chat-header"><span className="assistant-avatar"><Bot size={19} /></span><div><b>PayLeak AI</b><small><i /> Demo data context enabled</small></div><button className="chat-clear-button" onClick={clear}><Trash2 size={15} /> Clear conversation</button></header>
           <div className="chat-messages">
-            {messages.length === 0 && <div className="chat-empty"><span className="assistant-avatar large"><Sparkles size={23} /></span><h2>What would you like to understand?</h2><p>Ask about your transactions, invoice list, or sample route estimates.</p></div>}
+            {messages.length === 0 && <div className="chat-empty"><span className="assistant-avatar large"><Sparkles size={23} /></span><h2>What would you like to understand?</h2><p>Ask about your transactions, fees, or invoice list.</p></div>}
             {messages.map((message, index) => <div key={`${index}-${message.role}`} className={`chat-message ${message.role}`}><span className={`message-avatar ${message.role}`}>{message.role === "assistant" ? <Bot size={16} /> : <UserRound size={15} />}</span><div className="message-content"><div className="message-bubble">{message.text}</div>{message.source && <small className="message-source">{message.source} · not verified real financial data</small>}</div></div>)}
             {loading && <div className="chat-message assistant"><span className="message-avatar assistant"><Bot size={16} /></span><div className="typing-bubble"><i /><i /><i /></div></div>}
           </div>
@@ -78,7 +78,7 @@ export default function AIAssistant() {
           <form className="chat-input-area" onSubmit={(event) => { event.preventDefault(); submit(); }}><textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} placeholder="Ask about your sample payments..." rows="1" /><button className="send-chat" type="submit" disabled={!question.trim() || loading} aria-label="Send message"><ArrowUp size={18} /></button><small>Demo responses only · never a substitute for verified financial information</small></form>
         </section>
       </div>
-      <div className="assistant-actions"><span>Explore your demo workspace</span><a href="/leak-analysis">Analyze my transactions <ArrowUp size={14} /></a><a href="/route-optimizer">Compare payment routes <ArrowUp size={14} /></a><a href="/invoices">View overdue invoices ({overdue}) <ArrowUp size={14} /></a></div>
+      <div className="assistant-actions"><span>Explore your demo workspace</span><a href="/leak-analysis">Analyze my transactions <ArrowUp size={14} /></a><a href="/invoices">View overdue invoices ({overdue}) <ArrowUp size={14} /></a></div>
     </div>
   );
 }
