@@ -1,12 +1,25 @@
-import { api, endpoints } from "./api.js";
-import { demoNotifications } from "../data/demoData.js";
+import { api, endpoints, responseData } from "./api.js";
 
 export async function fetchNotifications() {
-  try {
-    const response = await api.get(endpoints.notifications);
-    return { data: response.data, source: "api" };
-  } catch (error) {
-    if (error.response) throw error;
-    return { data: demoNotifications, source: "demo" };
-  }
+  return responseData(await api.get(endpoints.notifications));
+}
+
+export async function setNotificationRead(id, read) {
+  return responseData(await api.patch(`${endpoints.notifications}/${encodeURIComponent(id)}`, { read }));
+}
+
+export async function markAllNotificationsRead() {
+  return responseData(await api.patch(`${endpoints.notifications}/read-all`));
+}
+
+export async function draftReminder(invoiceId) {
+  return responseData(await api.post(`${endpoints.notifications}/reminders/${encodeURIComponent(invoiceId)}/draft`));
+}
+
+export async function sendReminder(invoiceId) {
+  return responseData(await api.post(`${endpoints.notifications}/reminders/${encodeURIComponent(invoiceId)}/send`));
+}
+
+export async function deleteNotification(id) {
+  await api.delete(`${endpoints.notifications}/${encodeURIComponent(id)}`);
 }

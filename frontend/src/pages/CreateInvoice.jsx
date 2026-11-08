@@ -1,20 +1,21 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bot, CheckCircle2, Eye, FilePlus2, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, Bot, CheckCircle2, Eye, FilePlus2, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
 import Modal from "../components/Modal.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import { useAppData } from "../context/AppContext.jsx";
 import { extractInvoiceDetails } from "../services/invoiceService.js";
-import { money } from "../data/demoData.js";
+import { money } from "../utils/formatters.js";
 
 const blankInvoice = { client: "", email: "", amount: "", currency: "USD", description: "", date: new Date().toISOString().slice(0, 10), due: "" };
 
 export default function CreateInvoice() {
   const [form, setForm] = useState(blankInvoice);
   const [prompt, setPrompt] = useState("");
-  const [modal, setModal] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
   const [saved, setSaved] = useState(null);
+  const [saving, setSaving] = useState(false);
   const { createInvoice } = useAppData();
   const navigate = useNavigate();
 
@@ -22,7 +23,7 @@ export default function CreateInvoice() {
   const extract = () => {
     if (!prompt.trim()) return toast.error("Describe the invoice you want to create.");
     setForm((current) => ({ ...current, ...extractInvoiceDetails(prompt) }));
-    toast.success("Details extracted. Review and edit before saving.");
+    toast.success("Details filled from your text. Review them before saving.");
   };
   const validate = () => {
     if (!form.client.trim() || !form.email.includes("@") || Number(form.amount) <= 0 || !form.description.trim() || !form.due) {
@@ -31,29 +32,31 @@ export default function CreateInvoice() {
     }
     return true;
   };
-  const save = (status) => {
+  const saveDraft = async () => {
     if (!validate()) return;
-    const invoice = createInvoice(form, status);
-    setSaved(invoice);
-    if (status === "Sent") {
-      setModal("");
-      toast.success("Demo invoice marked as sent. No email was delivered.");
-    } else {
-      toast.success("Invoice saved to your demo list.");
+    setSaving(true);
+    try {
+      const invoice = await createInvoice(form);
+      setSaved(invoice);
+      toast.success("Invoice draft saved to your account.");
+      navigate("/invoices");
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || "Could not save the invoice.");
+    } finally {
+      setSaving(false);
     }
-    if (status === "Draft") navigate("/invoices");
   };
 
   return (
     <div className="page-enter">
-      <PageHeader eyebrow="BILLING / NEW INVOICE" title="Create an invoice" description="Add the details below, preview your invoice, then decide whether to save or send it." action={<Link className="button secondary" to="/invoices"><ArrowLeft size={16} /> Back to invoices</Link>} />
+      <PageHeader eyebrow="BILLING / NEW INVOICE" title="Create an invoice" description="Save a draft to your account. PayPal delivery is unavailable until its Invoicing integration is enabled." action={<Link className="button secondary" to="/invoices"><ArrowLeft size={16} /> Back to invoices</Link>} />
       <div className="invoice-create-grid">
         <div className="invoice-form-column">
           <section className="ai-create-card">
             <div className="ai-create-icon"><Sparkles size={18} /></div>
-            <div className="ai-create-copy"><b>Draft it with AI</b><p>Describe the invoice. We’ll fill a draft for you to review.</p></div>
-            <div className="ai-prompt-row"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Create an invoice for John Smith for $1,000 for website development, due in 15 days." rows="2" /><button className="button dark-button" onClick={extract}><Bot size={16} /> Extract details</button></div>
-            <span className="demo-caption"><Sparkles size={13} /> Local demo extraction · always review before use</span>
+            <div className="ai-create-copy"><b>Quick-fill from text</b><p>Basic browser field matching. Review and edit the details before saving.</p></div>
+            <div className="ai-prompt-row"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Create an invoice for Jordan Lee for $1,000 for website development, due in 15 days." rows="2" /><button className="button dark-button" onClick={extract}><Bot size={16} /> Fill fields</button></div>
+            <span className="local-extraction-caption"><Sparkles size={13} /> This convenience parser runs in your browser and does not use the AI service.</span>
           </section>
           <section className="panel form-panel">
             <div className="panel-heading"><div><h2>Invoice details</h2><p>Fields marked with * are required.</p></div><span className="step-count">01 <i /> 02</span></div>
@@ -66,18 +69,17 @@ export default function CreateInvoice() {
               <label className="field-label">Invoice date<input type="date" value={form.date} onChange={(event) => update("date", event.target.value)} /></label>
               <label className="field-label">Due date *<input type="date" value={form.due} onChange={(event) => update("due", event.target.value)} /></label>
             </div>
-            <div className="form-footer"><span><CheckCircle2 size={15} /> You can review before sending</span><button className="button secondary" onClick={() => setModal("preview")}><Eye size={16} /> Preview invoice</button></div>
+            <div className="form-footer"><span><CheckCircle2 size={15} /> Drafts are stored in your account</span><button className="button secondary" onClick={() => setShowPreview(true)}><Eye size={16} /> Preview invoice</button></div>
           </section>
-          <div className="form-actions"><button className="button secondary" onClick={() => save("Draft")}>Save draft</button><button className="button primary" onClick={() => { if (validate()) setModal("send"); }}><Send size={16} /> Review &amp; send</button></div>
+          <div className="form-actions"><button className="button primary" onClick={saveDraft} disabled={saving}>{saving ? <span className="spinner" /> : <><FilePlus2 size={16} /> Save draft</>}</button></div>
         </div>
         <aside className="invoice-side-note">
-          <div className="side-note-icon"><FilePlus2 size={19} /></div><h3>Before you send</h3><p>This prototype does not connect to PayPal or email clients. Sending will only create a clearly labelled demo record.</p>
-          <div className="side-note-rule" /><div className="side-note-row"><CheckCircle2 size={15} /><span>Confirm client details and currency</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Check your due date and description</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Review the preview before confirming</span></div>
-          {saved && <div className="saved-record"><b>Last created demo invoice</b><span>{saved.id}</span><small>PayPal ID: {saved.paypalId}</small><small>Status: {saved.status} · demo only</small><a href={saved.link} onClick={(event) => { event.preventDefault(); toast("This is a non-functional demo invoice link."); }}>View demo invoice link</a></div>}
+          <div className="side-note-icon"><FilePlus2 size={19} /></div><h3>Before you save</h3><p>This creates a draft record in your PayLeak account. It does not send an invoice or email.</p>
+          <div className="side-note-rule" /><div className="side-note-row"><CheckCircle2 size={15} /><span>Confirm client details and currency</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Check your due date and description</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Review the preview before saving</span></div>
+          {saved && <div className="saved-record"><b>Last saved draft</b><span>{saved.id}</span><small>Status: {saved.status}</small></div>}
         </aside>
       </div>
-      {modal === "preview" && <Modal title="Invoice preview" onClose={() => setModal("")}><div className="invoice-preview"><div className="preview-brand">pay<span>leak</span><small>DEMO INVOICE · NOT SENT</small></div><div className="preview-line"><span>Invoice to</span><b>{form.client || "Client name"}</b><small>{form.email || "client@email.com"}</small></div><div className="preview-line"><span>Invoice date</span><b>{form.date || "—"}</b></div><div className="preview-line"><span>Due date</span><b>{form.due || "—"}</b></div><div className="preview-description">{form.description || "Service description"}</div><div className="preview-total"><span>Total due</span><b>{money(Number(form.amount) || 0, form.currency)}</b></div></div><div className="modal-actions"><button className="button secondary" onClick={() => setModal("")}>Continue editing</button><button className="button primary" onClick={() => { setModal(""); toast("Preview looks good. Review all fields before sending."); }}>Looks good</button></div></Modal>}
-      {modal === "send" && <Modal title="Confirm demo invoice" onClose={() => setModal("")}><div className="confirmation-copy"><div className="confirm-icon"><Send size={20} /></div><p>Mark this invoice for <b>{form.client}</b> as sent in your local demo data?</p><p className="muted">No PayPal invoice will be created and no email will be delivered.</p><div className="confirm-total">{money(Number(form.amount) || 0, form.currency)} <span>{form.currency}</span></div></div><div className="modal-actions"><button className="button secondary" onClick={() => setModal("")}>Cancel</button><button className="button primary" onClick={() => save("Sent")}>Confirm demo send</button></div></Modal>}
+      {showPreview && <Modal title="Invoice preview" onClose={() => setShowPreview(false)}><div className="invoice-preview"><div className="preview-brand">pay<span>leak</span><small>INVOICE DRAFT · NOT SENT</small></div><div className="preview-line"><span>Invoice to</span><b>{form.client || "Client name"}</b><small>{form.email || "client@email.com"}</small></div><div className="preview-line"><span>Invoice date</span><b>{form.date || "—"}</b></div><div className="preview-line"><span>Due date</span><b>{form.due || "—"}</b></div><div className="preview-description">{form.description || "Service description"}</div><div className="preview-total"><span>Total due</span><b>{money(Number(form.amount) || 0, form.currency)}</b></div></div><div className="modal-actions"><button className="button secondary" onClick={() => setShowPreview(false)}>Continue editing</button><button className="button primary" onClick={() => setShowPreview(false)}>Close preview</button></div></Modal>}
     </div>
   );
 }

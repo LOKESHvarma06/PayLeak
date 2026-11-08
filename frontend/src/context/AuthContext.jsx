@@ -1,63 +1,101 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { api, endpoints, responseData } from "../services/api.js";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
+  const [user, setUser] = useState(null);
+  const [paypal, setPaypal] = useState(null);
+  const [status, setStatus] = useState("loading");
+  const [paypalError, setPaypalError] = useState("");
+
+  const refreshPaypalAccount = useCallback(async () => {
     try {
-      return JSON.parse(localStorage.getItem("payleak-user")) || null;
+      const response = await api.get(endpoints.paypalAccount);
+      setPaypal(responseData(response));
+      setPaypalError("");
     } catch (error) {
-      console.error("Could not read the saved demo session.", error);
-      return null;
+      setPaypal(null);
+      setPaypalError(error.response?.data?.error?.message || "Could not load PayPal account status.");
     }
-  });
-  const [paypal, setPaypal] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("payleak-paypal")) || null;
-    } catch (error) {
-      console.error("Could not read the saved demo connection.", error);
-      return null;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api.get(endpoints.currentUser)
+      .then((response) => {
+        if (active) {
+          setUser(responseData(response));
+          setStatus("authenticated");
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          if (error.response?.status !== 401) {
+            console.error("Could not restore the PayLeak session.", error);
+          }
+          setUser(null);
+          setStatus("anonymous");
+        }
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (user) void refreshPaypalAccount();
+    else {
+      setPaypal(null);
+      setPaypalError("");
     }
-  });
+  }, [user, refreshPaypalAccount]);
 
-  const login = (email) => {
-    const nextUser = { name: email.split("@")[0].replace(/[._-]/g, " "), email };
-    localStorage.setItem("payleak-user", JSON.stringify(nextUser));
-    setUser(nextUser);
-  };
+  const login = useCallback(async (credentials) => {
+    const response = await api.post(endpoints.login, credentials);
+    const data = responseData(response);
+    setUser(data.user);
+    setStatus("authenticated");
+    return data.user;
+  }, []);
 
-  const connectDemo = () => {
-    const connection = {
-      email: "alex.freelancer@paypal-demo.example",
-      type: "PayPal Sandbox",
-      connectedAt: new Date().toISOString(),
-    };
-    localStorage.setItem("payleak-paypal", JSON.stringify(connection));
-    setPaypal(connection);
-  };
+  const register = useCallback(async (details) => {
+    const response = await api.post(endpoints.register, details);
+    const data = responseData(response);
+    setUser(data.user);
+    setStatus("authenticated");
+    return data.user;
+  }, []);
 
-  const updateProfile = (profile) => {
-    const updatedUser = { ...user, ...profile };
-    localStorage.setItem("payleak-user", JSON.stringify(updatedUser));
+  const updateProfile = useCallback(async (profile) => {
+    const response = await api.put(endpoints.currentUser, profile);
+    const updatedUser = responseData(response);
     setUser(updatedUser);
-  };
+    return updatedUser;
+  }, []);
 
-  const disconnect = () => {
-    localStorage.removeItem("payleak-paypal");
-    setPaypal(null);
-  };
+  const logout = useCallback(async () => {
+    try {
+      await api.post(endpoints.logout);
+    } finally {
+      setUser(null);
+      setPaypal(null);
+      setPaypalError("");
+      setStatus("anonymous");
+    }
+  }, []);
 
-  const logout = () => {
-    localStorage.removeItem("payleak-user");
-    localStorage.removeItem("payleak-paypal");
-    setUser(null);
-    setPaypal(null);
-  };
-
-  const value = useMemo(
-    () => ({ user, paypal, isAuthenticated: Boolean(user), isConnected: Boolean(paypal), login, connectDemo, disconnect, logout, updateProfile }),
-    [user, paypal],
-  );
+  const value = useMemo(() => ({
+    user,
+    paypal,
+    paypalError,
+    status,
+    isAuthenticated: status === "authenticated" && Boolean(user),
+    isConnected: Boolean(paypal?.connected),
+    login,
+    register,
+    logout,
+    updateProfile,
+    refreshPaypalAccount,
+  }), [user, paypal, paypalError, status, login, register, logout, updateProfile, refreshPaypalAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

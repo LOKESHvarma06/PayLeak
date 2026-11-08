@@ -1,70 +1,110 @@
-import { createContext, useContext, useMemo, useState } from "react";
-import { demoInvoices, demoNotifications, demoTransactions } from "../data/demoData.js";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "./AuthContext.jsx";
+import { fetchAnalytics } from "../services/analyticsService.js";
+import { fetchInvoices, saveInvoice, updateInvoice } from "../services/invoiceService.js";
+import { deleteNotification, fetchNotifications, markAllNotificationsRead, setNotificationRead } from "../services/notificationService.js";
+import { fetchTransactions, syncTransactions as syncPaypalTransactions } from "../services/transactionService.js";
 
 const AppContext = createContext(null);
 
-const loadData = (key, fallback) => {
-  try {
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : fallback;
-  } catch (error) {
-    console.error(`Could not load ${key}; using the included demo data.`, error);
-    return fallback;
-  }
-};
-
-const loadNotifications = () => {
-  const saved = loadData("payleak-notifications", demoNotifications);
-  const active = saved.filter((notification) => notification.title !== "Compare withdrawal routes");
-  if (active.length !== saved.length) {
-    localStorage.setItem("payleak-notifications", JSON.stringify(active));
-  }
-  return active;
-};
-
 export function AppProvider({ children }) {
-  const [invoices, setInvoices] = useState(() => loadData("payleak-invoices", demoInvoices));
-  const [notifications, setNotifications] = useState(loadNotifications);
-  const transactions = demoTransactions;
+  const { user } = useAuth();
+  const [invoices, setInvoices] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading] = useState(Boolean(user));
+  const [error, setError] = useState("");
 
-  const persistInvoices = (next) => {
-    localStorage.setItem("payleak-invoices", JSON.stringify(next));
-    setInvoices(next);
-  };
+  const refresh = useCallback(async () => {
+    if (!user) {
+      setInvoices([]);
+      setTransactions([]);
+      setNotifications([]);
+      setAnalytics(null);
+      setLoading(false);
+      setError("");
+      return;
+    }
 
-  const createInvoice = (fields, status = "Draft") => {
-    const invoice = {
-      ...fields,
-      id: `INV-DEMO-${Date.now().toString().slice(-5)}`,
-      amount: Number(fields.amount),
-      status,
-      paypalId: `DEMO-${Date.now().toString(36).toUpperCase()}`,
-      link: "https://paypal.example/demo-invoice",
-    };
-    persistInvoices([invoice, ...invoices]);
+    setLoading(true);
+    setError("");
+    try {
+      const [nextInvoices, nextTransactions, nextNotifications, nextAnalytics] = await Promise.all([
+        fetchInvoices(),
+        fetchTransactions(),
+        fetchNotifications(),
+        fetchAnalytics(),
+      ]);
+      setInvoices(nextInvoices);
+      setTransactions(nextTransactions);
+      setNotifications(nextNotifications);
+      setAnalytics(nextAnalytics);
+    } catch (requestError) {
+      console.error("Could not load PayLeak account data.", requestError);
+      setError(requestError.response?.data?.error?.message || requestError.message || "Could not load account data.");
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const createInvoice = useCallback(async (fields) => {
+    const invoice = await saveInvoice({ ...fields, amount: String(fields.amount) });
+    setInvoices((current) => [invoice, ...current]);
     return invoice;
-  };
+  }, []);
 
-  const updateInvoiceStatus = (id, status) => {
-    persistInvoices(invoices.map((invoice) => invoice.id === id ? { ...invoice, status } : invoice));
-  };
+  const updateInvoiceStatus = useCallback(async (id, status) => {
+    const updated = await updateInvoice(id, { status });
+    setInvoices((current) => current.map((invoice) => invoice.id === id ? updated : invoice));
+    return updated;
+  }, []);
 
-  const updateNotifications = (next) => {
-    localStorage.setItem("payleak-notifications", JSON.stringify(next));
-    setNotifications(next);
-  };
+  const syncTransactions = useCallback(async (startDate, endDate) => {
+    const result = await syncPaypalTransactions(startDate, endDate);
+    const [nextTransactions, nextAnalytics] = await Promise.all([fetchTransactions(), fetchAnalytics()]);
+    setTransactions(nextTransactions);
+    setAnalytics(nextAnalytics);
+    return result;
+  }, []);
 
-  const resetDemo = () => {
-    localStorage.removeItem("payleak-invoices");
-    localStorage.removeItem("payleak-notifications");
-    setInvoices(demoInvoices);
-    setNotifications(demoNotifications);
-  };
+  const updateNotification = useCallback(async (id, read) => {
+    await setNotificationRead(id, read);
+    setNotifications((current) => current.map((item) => item.id === id ? { ...item, unread: read } : item));
+  }, []);
 
-  const value = useMemo(
-    () => ({ invoices, transactions, notifications, createInvoice, updateInvoiceStatus, updateNotifications, resetDemo }),
-    [invoices, transactions, notifications],
-  );
+  const updateNotifications = useCallback(async () => {
+    await markAllNotificationsRead();
+    setNotifications((current) => current.map((item) => ({ ...item, unread: false })));
+  }, []);
+
+  const removeNotification = useCallback(async (id) => {
+    await deleteNotification(id);
+    setNotifications((current) => current.filter((item) => item.id !== id));
+  }, []);
+
+  const value = useMemo(() => ({
+    invoices,
+    transactions,
+    notifications,
+    analytics,
+    loading,
+    error,
+    refresh,
+    createInvoice,
+    updateInvoiceStatus,
+    syncTransactions,
+    updateNotification,
+    updateNotifications,
+    removeNotification,
+  }), [
+    invoices, transactions, notifications, analytics, loading, error, refresh,
+    createInvoice, updateInvoiceStatus, syncTransactions, updateNotification, updateNotifications, removeNotification,
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

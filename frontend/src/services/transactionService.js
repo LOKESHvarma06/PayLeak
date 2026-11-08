@@ -1,34 +1,33 @@
-import { api, endpoints, isApiEnabled } from "./api.js";
-import { demoTransactions } from "../data/demoData.js";
-import { calculateLeak } from "../utils/calculations.js";
+import { api, endpoints, responseData } from "./api.js";
 
 export async function fetchTransactions() {
-  if (!isApiEnabled) return { data: demoTransactions, source: "demo" };
-  try {
-    const response = await api.get(endpoints.transactions);
-    return { data: response.data, source: "api" };
-  } catch (error) {
-    if (error.response) throw error;
-    return { data: demoTransactions, source: "demo" };
-  }
+  const response = await api.get(endpoints.transactions, { params: { limit: 100 } });
+  return responseData(response).items;
 }
 
-export async function runLeakAnalysis(transactionId, reportCurrency = "INR") {
-  if (!isApiEnabled) {
-    const transaction = demoTransactions.find((item) => item.id === transactionId);
-    if (!transaction) throw new Error(`Unknown demo transaction: ${transactionId}`);
-    return { data: calculateLeak(transaction, reportCurrency), source: "demo" };
-  }
+export async function fetchTransactionPage(params, signal) {
+  return responseData(await api.get(endpoints.transactions, { params, signal }));
+}
 
-  try {
-    const response = await api.get(`${endpoints.leakAnalysis}/${encodeURIComponent(transactionId)}`, {
-      params: { currency: reportCurrency },
-    });
-    return { data: response.data, source: "api" };
-  } catch (error) {
-    if (error.response) throw error;
-    const transaction = demoTransactions.find((item) => item.id === transactionId);
-    if (!transaction) throw new Error(`Unknown demo transaction: ${transactionId}`);
-    return { data: calculateLeak(transaction, reportCurrency), source: "demo" };
-  }
+export async function fetchTransaction(id, signal) {
+  return responseData(await api.get(`${endpoints.transactions}/${encodeURIComponent(id)}`, { signal }));
+}
+
+export async function syncTransactions(startDate, endDate) {
+  return responseData(await api.post(`${endpoints.transactions}/sync`, { startDate, endDate }, { timeout: 120000 }));
+}
+
+export function getDefaultPaypalSyncRange() {
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - 3 * 365 * 24 * 60 * 60 * 1000);
+  return { startDate: startDate.toISOString(), endDate: endDate.toISOString() };
+}
+
+export async function diagnosePaypalAccess() {
+  return responseData(await api.post(endpoints.paypalDiagnostics, {}, { timeout: 30000 }));
+}
+
+export async function runLeakAnalysis(transactionId) {
+  const response = await api.get(`${endpoints.transactions}/${encodeURIComponent(transactionId)}/currency-breakdown`);
+  return responseData(response);
 }
