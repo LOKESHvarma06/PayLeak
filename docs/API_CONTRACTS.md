@@ -37,6 +37,8 @@ fees or rates.
 | DELETE | `/clients/:id` | Delete a client |
 | GET | `/invoices` | List the user's invoices |
 | POST | `/invoices` | Create a draft invoice |
+| POST | `/invoices/paypal/diagnostics` | Verify PayPal OAuth, invoice-read scope, and the first Invoicing API page |
+| POST | `/invoices/sync-paypal` | Import/update all PayPal invoices for the authenticated configured owner |
 | GET | `/invoices/:id` | Get one invoice |
 | PUT | `/invoices/:id` | Update an invoice |
 | DELETE | `/invoices/:id` | Delete an unpaid invoice |
@@ -63,6 +65,17 @@ fees or rates.
 | POST | `/notifications/reminders/:invoiceId/send` | Currently unavailable; no email is sent |
 | POST | `/ai/chat` | Ask the AI to explain stored financial data |
 | POST | `/ai/assistant` | AI chat alias |
+| POST | `/ai/diagnostics` | Test Google Gemini key availability, model, and API connectivity without returning credentials |
+
+AI chat accepts `{ "question": "...", "history": [{ "role": "user|assistant", "text": "..." }] }`.
+The backend fetches transactions, invoices, and currency conversions using the
+authenticated user's ID and sends only those records plus recent conversation turns
+to Google Gemini. Conversation history is kept in the current frontend session and
+is not stored in MongoDB. Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend
+environment (`gemini-3.5-flash-lite` by default; `gemini-2.5-flash` was not
+available to this AI Studio key when verified). Diagnostics makes a minimal Gemini
+request and returns provider, model, and connectivity status; it never returns the
+API key.
 
 `POST /paypal/orders` requires an `Idempotency-Key` UUID header and a validated
 amount, currency, and description. The browser redirects the buyer to PayPal's
@@ -77,6 +90,16 @@ are granted and a verified, immutable PayLeak owner user ID is configured.
 Email matching is not an ownership proof. Connecting separate merchants
 requires eligible PayPal partner seller-consent access; app client credentials
 alone do not supply that authorization.
+PayPal invoice import uses the separate Invoicing API
+`GET /v2/invoicing/invoices?page=1&page_size=100&total_required=true` and requires
+the `https://uri.paypal.com/services/invoicing/invoices/read` OAuth scope. It
+paginates all returned pages and upserts by authenticated `userId` plus PayPal
+invoice ID. Import does not create invoices in PayPal or delete local invoices.
+The sync response reports OAuth app ID, scope/access diagnostics, page counts,
+insert/update/duplicate totals, and the MongoDB invoice count without returning
+credentials or access tokens. PayPal does not return the merchant identity for
+client-credentials invoice-list requests; verify the REST app's Sandbox Business
+association in the PayPal Developer Dashboard.
 `POST /transactions/sync` accepts a date range of up to three years and queries
 PayPal in consecutive 30-day windows, requesting `fields=all` and paging through
 each response. Its result includes the OAuth app ID (never the client secret or

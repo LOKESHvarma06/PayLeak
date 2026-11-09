@@ -21,8 +21,8 @@ const schema = z.object({
     (value) => value === "" ? undefined : value,
     z.string().regex(/^[a-f\d]{24}$/i, "PAYPAL_ACCOUNT_OWNER_USER_ID must be a MongoDB user ID.").optional(),
   ),
-  OPENAI_API_KEY: z.string().optional().default(""),
-  OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
+  GEMINI_API_KEY: z.string().optional().default(""),
+  GEMINI_MODEL: z.string().default("gemini-3.5-flash-lite"),
 }).superRefine((config, context) => {
   const paypalHost = new URL(config.PAYPAL_BASE_URL).hostname;
   const expectedHost = config.PAYPAL_MODE === "sandbox" ? "api-m.sandbox.paypal.com" : "api-m.paypal.com";

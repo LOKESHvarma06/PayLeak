@@ -4,6 +4,6 @@ export const money = (amount, currency = "USD") =>
 export const getInvoiceTotals = (invoices) => ({
   total: invoices.length,
   paid: invoices.filter((invoice) => invoice.status === "Paid").length,
-  pending: invoices.filter((invoice) => ["Draft", "Sent"].includes(invoice.status)).length,
+  pending: invoices.filter((invoice) => ["Draft", "Sent", "Partially Paid"].includes(invoice.status)).length,
   overdue: invoices.filter((invoice) => invoice.status === "Overdue").length,
 });

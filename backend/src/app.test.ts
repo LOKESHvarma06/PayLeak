@@ -35,6 +35,26 @@ test("health and protected route responses use the documented API envelope", asy
   assert.equal(protectedPaypalDiagnostics.status, 401);
   assert.equal((await protectedPaypalDiagnostics.json() as { error: { code: string } }).error.code, "AUTH_REQUIRED");
 
+  const protectedInvoiceSync = await fetch(`${baseUrl}/api/invoices/sync-paypal`, { method: "POST" });
+  assert.equal(protectedInvoiceSync.status, 401);
+  assert.equal((await protectedInvoiceSync.json() as { error: { code: string } }).error.code, "AUTH_REQUIRED");
+
+  const protectedInvoiceDiagnostics = await fetch(`${baseUrl}/api/invoices/paypal/diagnostics`, { method: "POST" });
+  assert.equal(protectedInvoiceDiagnostics.status, 401);
+  assert.equal((await protectedInvoiceDiagnostics.json() as { error: { code: string } }).error.code, "AUTH_REQUIRED");
+
+  const protectedAiChat = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: "Summarize my transactions." }),
+  });
+  assert.equal(protectedAiChat.status, 401);
+  assert.equal((await protectedAiChat.json() as { error: { code: string } }).error.code, "AUTH_REQUIRED");
+
+  const protectedAiDiagnostics = await fetch(`${baseUrl}/api/ai/diagnostics`, { method: "POST" });
+  assert.equal(protectedAiDiagnostics.status, 401);
+  assert.equal((await protectedAiDiagnostics.json() as { error: { code: string } }).error.code, "AUTH_REQUIRED");
+
   const protectedOrderCreation = await fetch(`${baseUrl}/api/paypal/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

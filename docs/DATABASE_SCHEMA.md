@@ -11,8 +11,11 @@ arithmetic does not depend on binary floating point.
 
 - **User** — normalized unique email, display name, and password hash.
 - **Client** — user-owned client contact details.
-- **Invoice** — user-owned client, amount/currency, invoice and due dates,
-  status, and optional PayPal invoice identifier.
+- **Invoice** — user-owned local or PayPal-imported invoice; includes customer,
+  invoice number, amount/currency, subtotal/tax, invoice and due dates, payment
+  details, source, status, and an optional unique PayPal invoice identifier.
+  PayPal imports are upserted by `(userId, paypalInvoiceId)`; local drafts do
+  not participate in that unique index.
 - **Transaction** — user owner, PayPal transaction ID, gross and actual fee
   amount/currency/source, conversion and payout fields, transaction date/status,
   retrieval timestamp, financial-data completeness, and retained raw PayPal

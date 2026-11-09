@@ -13,7 +13,7 @@ process.env.PAYPAL_ACCOUNT_OWNER_USER_ID = "";
 
 test("refreshes a rejected access token and reports denied API permissions safely", async () => {
   const originalFetch = globalThis.fetch;
-  const { clearPaypalTokenCache, paypalRequest, verifyPaypalApplicationOAuth } = await import("./paypalClient.js");
+  const { clearPaypalTokenCache, paypalRequest, verifyPaypalApplicationOAuth, verifyPaypalInvoiceOAuth } = await import("./paypalClient.js");
   let tokenRequests = 0;
   let apiRequests = 0;
   const authHeaders: string[] = [];
@@ -25,7 +25,7 @@ test("refreshes a rejected access token and reports denied API permissions safel
       return new Response(JSON.stringify({
         access_token: `temporary-token-${tokenRequests}`,
         expires_in: 3600,
-        scope: "https://uri.paypal.com/services/reporting/search/read",
+        scope: "https://uri.paypal.com/services/reporting/search/read https://uri.paypal.com/services/invoicing/invoices/read",
         app_id: "APP-TEST-APP-ID",
       }), {
         status: 200,
@@ -69,7 +69,13 @@ test("refreshes a rejected access token and reports denied API permissions safel
       appId: "APP-TEST-APP-ID",
       clientIdLast4: "t-id",
     });
-    assert.equal(tokenRequests, 3, "diagnostics requests a fresh token rather than reusing the cached one");
+    assert.deepEqual(await verifyPaypalInvoiceOAuth(), {
+      authenticated: true,
+      invoiceReadScope: "present",
+      appId: "APP-TEST-APP-ID",
+      clientIdLast4: "t-id",
+    });
+    assert.equal(tokenRequests, 4, "diagnostics request fresh tokens rather than reusing the cached one");
   } finally {
     clearPaypalTokenCache();
     globalThis.fetch = originalFetch;

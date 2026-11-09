@@ -16,6 +16,7 @@ export const endpoints = {
   analytics: "/analytics",
   leakAnalysis: "/analytics/leaks",
   chat: "/ai/chat",
+  aiDiagnostics: "/ai/diagnostics",
   notifications: "/notifications",
   paypalConfig: "/paypal/config",
   paypalAccount: "/paypal/account",

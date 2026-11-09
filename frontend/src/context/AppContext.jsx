@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useAuth } from "./AuthContext.jsx";
 import { fetchAnalytics } from "../services/analyticsService.js";
-import { fetchInvoices, saveInvoice, updateInvoice } from "../services/invoiceService.js";
+import { fetchInvoices, saveInvoice, syncPaypalInvoices as syncPaypalInvoicesApi, updateInvoice } from "../services/invoiceService.js";
 import { deleteNotification, fetchNotifications, markAllNotificationsRead, setNotificationRead } from "../services/notificationService.js";
 import { fetchTransactions, syncTransactions as syncPaypalTransactions } from "../services/transactionService.js";
 
@@ -72,6 +72,14 @@ export function AppProvider({ children }) {
     return result;
   }, []);
 
+  const syncInvoices = useCallback(async () => {
+    const result = await syncPaypalInvoicesApi();
+    const [nextInvoices, nextAnalytics] = await Promise.all([fetchInvoices(), fetchAnalytics()]);
+    setInvoices(nextInvoices);
+    setAnalytics(nextAnalytics);
+    return result;
+  }, []);
+
   const updateNotification = useCallback(async (id, read) => {
     await setNotificationRead(id, read);
     setNotifications((current) => current.map((item) => item.id === id ? { ...item, unread: read } : item));
@@ -98,12 +106,13 @@ export function AppProvider({ children }) {
     createInvoice,
     updateInvoiceStatus,
     syncTransactions,
+    syncInvoices,
     updateNotification,
     updateNotifications,
     removeNotification,
   }), [
     invoices, transactions, notifications, analytics, loading, error, refresh,
-    createInvoice, updateInvoiceStatus, syncTransactions, updateNotification, updateNotifications, removeNotification,
+    createInvoice, updateInvoiceStatus, syncTransactions, syncInvoices, updateNotification, updateNotifications, removeNotification,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

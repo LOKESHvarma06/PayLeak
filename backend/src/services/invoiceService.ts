@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { Client } from "../models/Client.js";
 import { Invoice } from "../models/Invoice.js";
 import { AppError } from "../utils/errors.js";
+import { ensurePaypalInvoiceIndex } from "./invoiceIndexService.js";
 
 export async function listInvoices(userId: string) {
   const invoices = await Invoice.find({ userId }).sort({ createdAt: -1 }).lean();
@@ -11,6 +12,7 @@ export async function listInvoices(userId: string) {
 export async function createInvoice(userId: string, input: {
   clientId?: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date;
 }) {
+  await ensurePaypalInvoiceIndex();
   let clientId: Types.ObjectId | null = null;
   if (input.clientId) {
     const client = await Client.findOne({ _id: input.clientId, userId });
@@ -28,6 +30,7 @@ export async function createInvoice(userId: string, input: {
     invoiceDate: input.date,
     dueDate: input.due,
     status: "Draft",
+    source: "payleak",
   });
   return toFrontendInvoice(invoice.toObject());
 }
@@ -39,7 +42,7 @@ export async function getInvoice(userId: string, id: string) {
 }
 
 export async function updateInvoice(userId: string, id: string, input: Partial<{
-  clientId: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date; status: "Draft" | "Sent" | "Paid" | "Overdue" | "Cancelled";
+  clientId: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date; status: "Draft" | "Sent" | "Partially Paid" | "Paid" | "Overdue" | "Cancelled" | "Refunded";
 }>) {
   const fields: Record<string, unknown> = { ...input };
   if (input.date) fields.invoiceDate = input.date;
@@ -69,19 +72,37 @@ export async function sendInvoice(userId: string, id: string) {
 
 function toFrontendInvoice(invoice: {
   _id: unknown; client: string; email: string; amount: string; currency: string; description: string;
-  invoiceDate: Date; dueDate: Date; status: string; paypalInvoiceId?: string | null;
+  invoiceDate: Date; dueDate?: Date | null; status: string; paypalInvoiceId?: string | null;
+  invoiceNumber?: string | null; customerEmail?: string | null; customerName?: string | null;
+  subtotal?: string | null; tax?: string | null; totalAmount?: string | null; paymentAmount?: string | null;
+  paymentDate?: Date | null; invoiceUrl?: string | null; source?: string;
 }) {
+  const id = String(invoice._id);
+  let status = invoice.status;
+  if ((status === "Sent" || status === "Partially Paid") && invoice.dueDate) {
+    const todayUtc = new Date();
+    todayUtc.setUTCHours(0, 0, 0, 0);
+    const dueUtc = new Date(invoice.dueDate);
+    dueUtc.setUTCHours(0, 0, 0, 0);
+    if (dueUtc.getTime() < todayUtc.getTime()) status = "Overdue";
+  }
   return {
-    id: String(invoice._id),
-    client: invoice.client,
-    email: invoice.email,
-    amount: invoice.amount,
+    id,
+    invoiceNumber: invoice.invoiceNumber ?? id,
+    client: invoice.customerName || invoice.client || "Unknown customer",
+    email: invoice.customerEmail || invoice.email || "",
+    amount: invoice.totalAmount ?? invoice.amount,
     currency: invoice.currency,
     description: invoice.description,
     date: invoice.invoiceDate.toISOString().slice(0, 10),
-    due: invoice.dueDate.toISOString().slice(0, 10),
-    status: invoice.status,
+    due: invoice.dueDate?.toISOString().slice(0, 10) ?? null,
+    status,
+    subtotal: invoice.subtotal,
+    tax: invoice.tax,
+    paymentAmount: invoice.paymentAmount,
+    paymentDate: invoice.paymentDate?.toISOString().slice(0, 10) ?? null,
+    invoiceUrl: invoice.invoiceUrl,
     paypalId: invoice.paypalInvoiceId,
-    source: "payleak_database",
+    source: invoice.source ?? "payleak",
   };
 }

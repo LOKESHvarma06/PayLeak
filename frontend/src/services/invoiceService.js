@@ -4,6 +4,14 @@ export async function fetchInvoices() {
   return responseData(await api.get(endpoints.invoices));
 }
 
+export async function syncPaypalInvoices() {
+  return responseData(await api.post(`${endpoints.invoices}/sync-paypal`, {}, { timeout: 120000 }));
+}
+
+export async function diagnosePaypalInvoices() {
+  return responseData(await api.post(`${endpoints.invoices}/paypal/diagnostics`, {}, { timeout: 30000 }));
+}
+
 export async function saveInvoice(invoice) {
   return responseData(await api.post(endpoints.invoices, invoice));
 }

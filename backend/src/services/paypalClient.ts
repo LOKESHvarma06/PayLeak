@@ -10,6 +10,7 @@ interface TokenResponse {
 
 const transactionSearchScope = "https://uri.paypal.com/services/reporting/search/read";
 let tokenCache: { value: string; expiresAt: number; scopes: string[]; appId: string | null } | undefined;
+const invoiceReadScope = "https://uri.paypal.com/services/invoicing/invoices/read";
 
 async function getAccessToken(forceRefresh = false) {
   if (!env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) {
@@ -72,12 +73,23 @@ async function getAccessToken(forceRefresh = false) {
 
 export async function verifyPaypalApplicationOAuth() {
   const token = await getAccessToken(true);
-  const scopeStatus = token.scopes.length === 0
-    ? "not_reported"
-    : token.scopes.includes(transactionSearchScope) ? "present" : "missing";
   return {
     authenticated: true,
-    transactionSearchScope: scopeStatus,
+    transactionSearchScope: token.scopes.length === 0
+      ? "not_reported"
+      : token.scopes.includes(transactionSearchScope) ? "present" : "missing",
+    appId: token.appId,
+    clientIdLast4: env.PAYPAL_CLIENT_ID.slice(-4),
+  };
+}
+
+export async function verifyPaypalInvoiceOAuth() {
+  const token = await getAccessToken(true);
+  return {
+    authenticated: true,
+    invoiceReadScope: token.scopes.length === 0
+      ? "not_reported"
+      : token.scopes.includes(invoiceReadScope) ? "present" : "missing",
     appId: token.appId,
     clientIdLast4: env.PAYPAL_CLIENT_ID.slice(-4),
   };
@@ -124,7 +136,7 @@ export async function paypalRequest<T>(
       throw new AppError(
         response.status === 403 ? 503 : 502,
         response.status === 403
-          ? "PayPal rejected the Transaction Search API request. Check the Sandbox app/account authorization using the returned PayPal error and debug ID."
+          ? "PayPal denied this API request. Check the app permissions and Sandbox merchant association using the returned PayPal error and debug ID."
           : `PayPal API request failed with status ${response.status}.`,
         response.status === 403 ? "PAYPAL_PERMISSION_DENIED" : "PAYPAL_API_ERROR",
         { httpStatus: response.status, paypalErrorName, paypalMessage, debugId },

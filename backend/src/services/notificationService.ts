@@ -45,7 +45,7 @@ export async function draftReminder(userId: string, invoiceId: string) {
   return {
     invoiceId: String(invoice._id),
     to: invoice.email,
-    message: `Hello ${invoice.client},\n\nThis is a reminder that invoice ${String(invoice._id)} for ${invoice.amount} ${invoice.currency} was due on ${invoice.dueDate.toISOString().slice(0, 10)}. Please let me know if you have any questions.\n\nThank you.`,
+    message: `Hello ${invoice.client},\n\nThis is a reminder that invoice ${invoice.invoiceNumber || String(invoice._id)} for ${invoice.amount} ${invoice.currency}${invoice.dueDate ? ` was due on ${invoice.dueDate.toISOString().slice(0, 10)}` : ""}. Please let me know if you have any questions.\n\nThank you.`,
     status: "draft_only",
     sent: false,
   };

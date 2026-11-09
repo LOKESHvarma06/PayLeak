@@ -9,13 +9,18 @@ import { createInvoice, deleteInvoice, getInvoice, listInvoices, sendInvoice, up
 import { invoiceBody, invoiceFields } from "../validators/invoice.js";
 import { idParam } from "../validators/common.js";
 import { z } from "zod";
+import { diagnosePaypalInvoiceAccess, syncPaypalInvoices } from "../services/paypalInvoiceService.js";
 
-const invoicePatch = invoiceFields.partial().extend({ status: z.enum(["Draft", "Sent", "Paid", "Overdue", "Cancelled"]).optional() }).strict();
+const invoicePatch = invoiceFields.partial().extend({ status: z.enum(["Draft", "Sent", "Partially Paid", "Paid", "Overdue", "Cancelled", "Refunded"]).optional() }).strict();
 export const invoiceRoutes = Router();
 invoiceRoutes.use(requireAuth);
 
 invoiceRoutes.get("/", asyncHandler(async (req, res) => success(res, await listInvoices(getUserId(req)))));
 invoiceRoutes.post("/", validateBody(invoiceBody), asyncHandler(async (req, res) => success(res, await createInvoice(getUserId(req), req.body), 201)));
+invoiceRoutes.post("/paypal/diagnostics", asyncHandler(async (req, res) =>
+  success(res, await diagnosePaypalInvoiceAccess(getUserId(req)))));
+invoiceRoutes.post("/sync-paypal", asyncHandler(async (req, res) =>
+  success(res, await syncPaypalInvoices(getUserId(req)))));
 invoiceRoutes.get("/:id", asyncHandler(async (req, res) => {
   const { id } = idParam.parse(req.params);
   return success(res, await getInvoice(getUserId(req), id));
