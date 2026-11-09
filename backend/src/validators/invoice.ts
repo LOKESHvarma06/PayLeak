@@ -1,3 +1,4 @@
+import { Decimal } from "decimal.js";
 import { z } from "zod";
 import { currencyCode, decimalString } from "./common.js";
 
@@ -5,7 +6,7 @@ export const invoiceFields = z.object({
   clientId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   client: z.string().trim().min(1).max(160),
   email: z.string().trim().email().max(254),
-  amount: decimalString,
+  amount: decimalString.refine((value) => new Decimal(value).greaterThan(0), "Invoice amount must be greater than zero."),
   currency: currencyCode,
   description: z.string().trim().min(1).max(2000),
   date: z.coerce.date(),

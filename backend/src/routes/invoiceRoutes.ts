@@ -5,22 +5,31 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { success } from "../utils/response.js";
 import { AppError } from "../utils/errors.js";
 import { Invoice } from "../models/Invoice.js";
-import { createInvoice, deleteInvoice, getInvoice, listInvoices, sendInvoice, updateInvoice } from "../services/invoiceService.js";
+import { createInvoice, deleteInvoice, getInvoice, listInvoices, publishInvoiceToPaypal, sendInvoice, updateInvoice } from "../services/invoiceService.js";
 import { invoiceBody, invoiceFields } from "../validators/invoice.js";
 import { idParam } from "../validators/common.js";
 import { z } from "zod";
 import { diagnosePaypalInvoiceAccess, syncPaypalInvoices } from "../services/paypalInvoiceService.js";
 
-const invoicePatch = invoiceFields.partial().extend({ status: z.enum(["Draft", "Sent", "Partially Paid", "Paid", "Overdue", "Cancelled", "Refunded"]).optional() }).strict();
+const invoicePatch = invoiceFields.partial();
+const idempotencyKey = z.string().uuid();
 export const invoiceRoutes = Router();
 invoiceRoutes.use(requireAuth);
 
 invoiceRoutes.get("/", asyncHandler(async (req, res) => success(res, await listInvoices(getUserId(req)))));
-invoiceRoutes.post("/", validateBody(invoiceBody), asyncHandler(async (req, res) => success(res, await createInvoice(getUserId(req), req.body), 201)));
+invoiceRoutes.post("/", validateBody(invoiceBody), asyncHandler(async (req, res) => {
+  const requestId = idempotencyKey.parse(req.header("Idempotency-Key"));
+  return success(res, await createInvoice(getUserId(req), req.body, requestId), 201);
+}));
 invoiceRoutes.post("/paypal/diagnostics", asyncHandler(async (req, res) =>
   success(res, await diagnosePaypalInvoiceAccess(getUserId(req)))));
 invoiceRoutes.post("/sync-paypal", asyncHandler(async (req, res) =>
   success(res, await syncPaypalInvoices(getUserId(req)))));
+invoiceRoutes.post("/:id/paypal", asyncHandler(async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  const requestId = idempotencyKey.parse(req.header("Idempotency-Key"));
+  return success(res, await publishInvoiceToPaypal(getUserId(req), id, requestId), 201);
+}));
 invoiceRoutes.get("/:id", asyncHandler(async (req, res) => {
   const { id } = idParam.parse(req.params);
   return success(res, await getInvoice(getUserId(req), id));

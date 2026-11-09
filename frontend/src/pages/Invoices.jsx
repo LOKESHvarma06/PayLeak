@@ -70,7 +70,7 @@ export default function Invoices() {
     try {
       const result = await diagnosePaypalInvoices();
       setSyncDiagnostics(result);
-      if (result.paypalApiError) {
+      if (result.paypalApiError || result.invoiceApiAccess !== "verified" || result.invoiceCreatePermission !== "verified_by_successful_create" || result.ownerBinding !== "verified") {
         setRequestError(result.guidance);
         toast.error(result.guidance);
       } else {
@@ -101,10 +101,17 @@ export default function Invoices() {
           <dt>Environment</dt><dd>{syncDiagnostics.environment}</dd>
           <dt>PayLeak user ID</dt><dd>{syncDiagnostics.payLeakUserId}</dd>
           <dt>PayPal OAuth</dt><dd>{syncDiagnostics.applicationOAuth || "not verified"}</dd>
+          <dt>PayLeak owner binding</dt><dd>{syncDiagnostics.ownerBinding || "not verified"}</dd>
           <dt>PayPal application ID</dt><dd>{syncDiagnostics.paypalApplicationId || "not reported"}</dd>
           <dt>Client ID suffix</dt><dd>{syncDiagnostics.clientIdLast4 || "not reported"}</dd>
           <dt>Merchant identity</dt><dd>{syncDiagnostics.merchantAccount || "not available from app OAuth"}</dd>
           <dt>Invoice read permission</dt><dd>{syncDiagnostics.invoiceReadPermission || "not verified"}</dd>
+          <dt>Invoice write permission</dt><dd>{syncDiagnostics.invoiceWritePermission || "not verified"}</dd>
+          <dt>Invoice read OAuth scope</dt><dd>{syncDiagnostics.invoiceReadScopeClaim || "not reported"}</dd>
+          <dt>Invoice write OAuth scope</dt><dd>{syncDiagnostics.invoiceWriteScopeClaim || "not reported"}</dd>
+          <dt>Invoice API read test</dt><dd>{syncDiagnostics.invoiceApiAccess || "not tested"}</dd>
+          <dt>Invoice create permission</dt><dd>{syncDiagnostics.invoiceCreatePermission || "not tested"}</dd>
+          <dt>Invoice send permission</dt><dd>{syncDiagnostics.invoiceSendPermission || "not tested"}</dd>
           <dt>PayPal HTTP status</dt><dd>{syncDiagnostics.paypalHttpStatus ?? syncDiagnostics.paypalApiError?.httpStatus ?? "not requested"}</dd>
           <dt>PayPal total_items</dt><dd>{syncDiagnostics.paypalTotalItems ?? "not returned"}</dd>
           <dt>PayPal total_pages</dt><dd>{syncDiagnostics.paypalTotalPages ?? "not returned"}</dd>

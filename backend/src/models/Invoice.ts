@@ -22,7 +22,10 @@ const invoiceSchema = new Schema({
   status: { type: String, enum: ["Draft", "Sent", "Partially Paid", "Paid", "Overdue", "Cancelled", "Refunded"], default: "Draft" },
   source: { type: String, enum: ["payleak", "paypal"], default: "payleak", required: true },
   paypalInvoiceId: { type: String, trim: true },
+  paypalRequestId: { type: String, trim: true },
+  paypalSendRequestId: { type: String, trim: true },
   paypalStatus: { type: String, default: null },
+  paypalLastSyncedAt: { type: Date, default: null },
 }, { timestamps: true, versionKey: false });
 
 invoiceSchema.index({ userId: 1, createdAt: -1 });

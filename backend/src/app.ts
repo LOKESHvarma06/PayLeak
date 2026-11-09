@@ -21,7 +21,13 @@ const apiLimit = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true
 
 app.disable("x-powered-by");
 app.use(helmet());
-app.use(cors({ origin: env.FRONTEND_URL, credentials: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], allowedHeaders: ["Content-Type", "Authorization"] }));
+app.use(cors({
+  origin: env.FRONTEND_URL,
+  credentials: true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Accept", "Authorization", "Content-Type", "Idempotency-Key"],
+  optionsSuccessStatus: 204,
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use("/api", apiLimit);
 

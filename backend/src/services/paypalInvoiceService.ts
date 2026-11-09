@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
 import { Invoice } from "../models/Invoice.js";
 import { AppError } from "../utils/errors.js";
@@ -32,7 +33,7 @@ interface PaypalInvoiceRecord {
       name?: { given_name?: string; surname?: string; full_name?: string };
     };
   }>;
-  items?: Array<{ name?: string; description?: string }>;
+  items?: Array<{ name?: string; description?: string; quantity?: string }>;
   amount?: {
     value?: string;
     currency_code?: string;
@@ -66,6 +67,56 @@ interface InvoicePageDiagnostic {
   totalItems: number;
   totalPages: number | null;
   returnedItems: number;
+}
+
+export interface PaypalInvoiceCreationInput {
+  clientId?: string;
+  client: string;
+  email: string;
+  amount: string;
+  currency: string;
+  description: string;
+  date: Date;
+  due: Date;
+}
+
+function dateOnly(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+export function buildPaypalInvoicePayload(input: PaypalInvoiceCreationInput) {
+  const [givenName, ...surnameParts] = input.client.trim().split(/\s+/);
+  return {
+    detail: {
+      invoice_date: dateOnly(input.date),
+      currency_code: input.currency,
+      memo: input.description,
+      payment_term: {
+        term_type: "DUE_ON_DATE_SPECIFIED",
+        due_date: dateOnly(input.due),
+      },
+    },
+    primary_recipients: [{
+      billing_info: {
+        email_address: input.email,
+        ...(givenName ? {
+          name: {
+            given_name: givenName,
+            ...(surnameParts.length ? { surname: surnameParts.join(" ") } : {}),
+          },
+        } : {}),
+      },
+    }],
+    items: [{
+      name: input.description.slice(0, 200),
+      description: input.description,
+      quantity: "1",
+      unit_amount: {
+        currency_code: input.currency,
+        value: input.amount,
+      },
+    }],
+  };
 }
 
 function extractError(error: unknown) {
@@ -123,6 +174,66 @@ async function getInvoiceDetails(invoiceId: string, onStatus: (status: number) =
     {},
     onStatus,
   );
+}
+
+function mergePaypalInvoice(base: PaypalInvoiceRecord, details: PaypalInvoiceRecord): PaypalInvoiceRecord {
+  return {
+    ...base,
+    ...details,
+    detail: { ...base.detail, ...details.detail },
+    payment_summary: details.payment_summary ?? base.payment_summary,
+    primary_recipients: details.primary_recipients ?? base.primary_recipients,
+    amount: details.amount ?? base.amount,
+    links: details.links ?? base.links,
+    items: details.items ?? base.items,
+  };
+}
+
+export async function createPaypalInvoiceRecord(
+  input: PaypalInvoiceCreationInput,
+  requestId: string,
+) {
+  const created = await paypalRequest<PaypalInvoiceRecord>(
+    "/v2/invoicing/invoices",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+        "PayPal-Request-Id": requestId,
+      },
+      body: JSON.stringify(buildPaypalInvoicePayload(input)),
+    },
+  );
+  if (!created.id) {
+    throw new AppError(502, "PayPal did not return an invoice ID. The invoice was not saved in PayLeak.", "PAYPAL_INVOICE_ID_MISSING");
+  }
+  if (!created.status || !created.detail?.invoice_number) {
+    try {
+      const details = await getInvoiceDetails(created.id, () => undefined);
+      return mergePaypalInvoice(created, details);
+    } catch (error) {
+      if (!created.status) throw error;
+    }
+  }
+  return created;
+}
+
+export async function sendPaypalInvoiceRecord(invoiceId: string, requestId: string): Promise<PaypalInvoiceRecord> {
+  const sent = await paypalRequest<PaypalInvoiceRecord | undefined>(
+    `/v2/invoicing/invoices/${encodeURIComponent(invoiceId)}/send`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "PayPal-Request-Id": requestId,
+      },
+      body: JSON.stringify({}),
+    },
+  );
+  if (sent && ["SENT", "UNPAID", "OVERDUE"].includes(sent.status?.toUpperCase() ?? "")) return sent;
+  const details = await getInvoiceDetails(invoiceId, () => undefined);
+  return mergePaypalInvoice(sent ?? { id: invoiceId }, details);
 }
 
 export async function getAllPaypalInvoicePages() {
@@ -196,12 +307,19 @@ export async function diagnosePaypalInvoiceAccess(userId: string) {
   const owner = await assertConfiguredOwner(userId);
   const result = {
     payLeakUserId: String(owner._id),
+    ownerBinding: "verified",
     environment: env.PAYPAL_MODE,
     applicationOAuth: "not_tested",
     paypalApplicationId: null as string | null,
     clientIdLast4: env.PAYPAL_CLIENT_ID ? env.PAYPAL_CLIENT_ID.slice(-4) : null,
     merchantAccount: "not_returned_by_client_credentials_api",
     invoiceReadPermission: "not_tested",
+    invoiceWritePermission: "not_tested",
+    invoiceReadScopeClaim: "not_tested",
+    invoiceWriteScopeClaim: "not_tested",
+    invoiceApiAccess: "not_tested",
+    invoiceCreatePermission: "not_tested_without_creating_an_invoice",
+    invoiceSendPermission: "not_tested_without_sending_an_invoice",
     paypalHttpStatus: null as number | null,
     paypalTotalItems: null as number | null,
     paypalTotalPages: null as number | null,
@@ -217,7 +335,8 @@ export async function diagnosePaypalInvoiceAccess(userId: string) {
     const oauth = await verifyPaypalInvoiceOAuth();
     result.applicationOAuth = "verified";
     result.paypalApplicationId = oauth.appId;
-    result.invoiceReadPermission = oauth.invoiceReadScope;
+    result.invoiceReadScopeClaim = oauth.invoiceReadScope;
+    result.invoiceWriteScopeClaim = oauth.invoiceWriteScope;
   } catch (error) {
     result.applicationOAuth = error instanceof AppError && error.code === "PAYPAL_AUTH_FAILED" ? "rejected" : "unavailable";
     result.paypalApiError = extractError(error);
@@ -225,17 +344,27 @@ export async function diagnosePaypalInvoiceAccess(userId: string) {
     return result;
   }
 
+  const successfulCreate = await Invoice.exists({
+    userId: owner._id,
+    source: "paypal",
+    paypalInvoiceId: { $type: "string" },
+    paypalRequestId: { $type: "string" },
+  });
+  result.invoiceWritePermission = successfulCreate ? "verified_by_successful_create" : "not_tested_without_creating_an_invoice";
+  result.invoiceCreatePermission = successfulCreate ? "verified_by_successful_create" : "not_tested_without_creating_an_invoice";
+
   try {
     const firstPage = await getInvoicePage(1, (status) => { result.paypalHttpStatus = status; });
     result.paypalTotalItems = firstPage.total_items ?? null;
     result.paypalTotalPages = firstPage.total_pages ?? null;
     result.invoicesRetrieved = firstPage.items?.length ?? 0;
-    if (result.invoiceReadPermission !== "present") {
-      result.guidance = "The Invoice API responded, but OAuth did not include the required invoice read permission. No invoices were imported.";
-    } else {
-      result.guidance = "PayPal Invoice API access is authorized.";
-    }
+    result.invoiceApiAccess = "verified";
+    result.invoiceReadPermission = "verified_by_api_request";
+    result.guidance = result.invoiceCreatePermission === "verified_by_successful_create"
+      ? "PayPal invoice listing and a prior PayLeak invoice creation both succeeded. Invoice sending is not yet tested; verify the REST app is associated with the intended Sandbox Business account."
+      : "PayPal invoice listing succeeded. OAuth scope claims are reported separately; create access has not been tested until PayLeak creates a draft. Sending remains untested.";
   } catch (error) {
+    result.invoiceApiAccess = "denied";
     result.paypalApiError = extractError(error);
     result.paypalHttpStatus = result.paypalApiError.httpStatus;
     result.guidance = result.paypalApiError.httpStatus === 403
@@ -302,7 +431,7 @@ export function mapPaypalInvoiceStatus(paypalStatusValue: string | undefined, du
   return "Sent";
 }
 
-function mapPaypalInvoice(userId: string, invoice: PaypalInvoiceRecord) {
+export function mapPaypalInvoice(userId: string, invoice: PaypalInvoiceRecord) {
   const paypalInvoiceId = invoice.id;
   const invoiceDate = parseDate(invoice.detail?.invoice_date) ?? parseDate(invoice.create_time);
   const dueDate = parseDate(invoice.detail?.payment_term?.due_date);
@@ -350,6 +479,180 @@ function mapPaypalInvoice(userId: string, invoice: PaypalInvoiceRecord) {
   };
 }
 
+function addSubmittedInvoiceDetails(created: PaypalInvoiceRecord, input: PaypalInvoiceCreationInput): PaypalInvoiceRecord {
+  return {
+    ...created,
+    create_time: created.create_time ?? input.date.toISOString(),
+    detail: {
+      ...created.detail,
+      invoice_date: created.detail?.invoice_date ?? dateOnly(input.date),
+      currency_code: created.detail?.currency_code ?? input.currency,
+      payment_term: created.detail?.payment_term ?? { due_date: dateOnly(input.due) },
+    },
+    primary_recipients: created.primary_recipients ?? [{
+      billing_info: { email_address: input.email, name: { full_name: input.client } },
+    }],
+    items: created.items ?? [{ name: input.description, description: input.description, quantity: "1" }],
+    amount: created.amount ?? { value: input.amount, currency_code: input.currency },
+  };
+}
+
+async function saveCreatedPaypalInvoice(
+  userId: string,
+  created: PaypalInvoiceRecord,
+  input: PaypalInvoiceCreationInput,
+  requestId: string,
+  existingInvoiceId?: string,
+) {
+  const mapped = mapPaypalInvoice(userId, addSubmittedInvoiceDetails(created, input));
+  if (!mapped || mapped.status !== "Draft") {
+    throw new AppError(502, "PayPal created an invoice but did not confirm a usable draft response. Sync PayPal invoices to recover it.", "PAYPAL_INVOICE_CREATE_UNCONFIRMED", {
+      paypalInvoiceId: created.id,
+      paypalStatus: created.status ?? null,
+    });
+  }
+  const invoiceFilter = existingInvoiceId
+    ? { _id: existingInvoiceId, userId, source: "payleak", paypalInvoiceId: { $exists: false } }
+    : { userId, paypalInvoiceId: mapped.paypalInvoiceId };
+  const invoice = await Invoice.findOneAndUpdate(
+    invoiceFilter,
+    {
+      $set: {
+        ...mapped,
+        clientId: input.clientId ?? null,
+        paypalRequestId: requestId,
+        paypalLastSyncedAt: new Date(),
+      },
+    },
+    { upsert: !existingInvoiceId, new: true, runValidators: true },
+  ).lean();
+  if (!invoice) {
+    throw new AppError(500, "PayPal confirmed the invoice, but PayLeak could not store it. Retry using the same Idempotency-Key or sync PayPal invoices.", "PAYPAL_INVOICE_PERSIST_FAILED", {
+      paypalInvoiceId: mapped.paypalInvoiceId,
+    });
+  }
+  return invoice;
+}
+
+export async function createPaypalInvoice(
+  userId: string,
+  input: PaypalInvoiceCreationInput,
+  requestId: string,
+) {
+  const owner = await assertConfiguredOwner(userId);
+  await ensurePaypalInvoiceIndex();
+  const created = await createPaypalInvoiceRecord(input, requestId);
+  return saveCreatedPaypalInvoice(String(owner._id), created, input, requestId);
+}
+
+export async function publishLocalInvoiceToPaypal(userId: string, localInvoiceId: string, requestId: string) {
+  const owner = await assertConfiguredOwner(userId);
+  const invoice = await Invoice.findOne({ _id: localInvoiceId, userId: owner._id });
+  if (!invoice) throw new AppError(404, "Invoice not found.", "INVOICE_NOT_FOUND");
+  if (invoice.source === "paypal" && invoice.paypalInvoiceId) return invoice.toObject();
+  if (invoice.source !== "payleak" || invoice.status !== "Draft" || invoice.paypalInvoiceId) {
+    throw new AppError(409, "Only an unlinked PayLeak draft can be created in PayPal.", "PAYPAL_INVOICE_NOT_LOCAL_DRAFT");
+  }
+  if (!invoice.paypalRequestId) {
+    await Invoice.updateOne(
+      { _id: invoice._id, userId: owner._id, source: "payleak", paypalInvoiceId: { $exists: false }, paypalRequestId: { $exists: false } },
+      { $set: { paypalRequestId: requestId } },
+    );
+  }
+  const pendingInvoice = await Invoice.findOne({ _id: invoice._id, userId: owner._id });
+  if (!pendingInvoice || pendingInvoice.source !== "payleak" || pendingInvoice.paypalInvoiceId) {
+    if (pendingInvoice?.source === "paypal" && pendingInvoice.paypalInvoiceId) return pendingInvoice.toObject();
+    throw new AppError(409, "The invoice changed before PayPal creation could begin. Refresh and retry.", "PAYPAL_INVOICE_CHANGED");
+  }
+
+  const input: PaypalInvoiceCreationInput = {
+    clientId: pendingInvoice.clientId ? String(pendingInvoice.clientId) : undefined,
+    client: pendingInvoice.client,
+    email: pendingInvoice.email,
+    amount: pendingInvoice.amount,
+    currency: pendingInvoice.currency,
+    description: pendingInvoice.description,
+    date: pendingInvoice.invoiceDate,
+    due: pendingInvoice.dueDate ?? pendingInvoice.invoiceDate,
+  };
+  await ensurePaypalInvoiceIndex();
+  const stableRequestId = pendingInvoice.paypalRequestId || requestId;
+  let created: PaypalInvoiceRecord;
+  try {
+    created = await createPaypalInvoiceRecord(input, stableRequestId);
+  } catch (error) {
+    if (error instanceof AppError && error.code === "PAYPAL_API_ERROR" && error.statusCode === 400) {
+      await Invoice.updateOne(
+        { _id: pendingInvoice._id, userId: owner._id, paypalRequestId: stableRequestId, paypalInvoiceId: { $exists: false } },
+        { $unset: { paypalRequestId: 1 } },
+      );
+    }
+    throw error;
+  }
+  return saveCreatedPaypalInvoice(String(owner._id), created, input, stableRequestId, String(pendingInvoice._id));
+}
+
+export async function sendPaypalInvoice(userId: string, localInvoiceId: string) {
+  const owner = await assertConfiguredOwner(userId);
+  const invoice = await Invoice.findOne({ _id: localInvoiceId, userId: owner._id });
+  if (!invoice) throw new AppError(404, "Invoice not found.", "INVOICE_NOT_FOUND");
+  if (invoice.source !== "paypal" || !invoice.paypalInvoiceId) {
+    throw new AppError(409, "This local invoice has not been created in PayPal. Create it through PayLeak before sending.", "PAYPAL_INVOICE_NOT_LINKED");
+  }
+  if (invoice.status !== "Draft") {
+    throw new AppError(409, `Only a PayPal-confirmed draft can be sent. Current PayLeak status: ${invoice.status}.`, "PAYPAL_INVOICE_NOT_DRAFT");
+  }
+
+  const requestId = invoice.paypalSendRequestId || randomUUID();
+  if (!invoice.paypalSendRequestId) {
+    invoice.paypalSendRequestId = requestId;
+    await invoice.save();
+  }
+  const confirmed = await sendPaypalInvoiceRecord(invoice.paypalInvoiceId, requestId);
+  if (!["SENT", "UNPAID", "OVERDUE"].includes(confirmed.status?.toUpperCase() ?? "")) {
+    throw new AppError(502, "PayPal did not confirm that the invoice was sent. PayLeak status was not changed.", "PAYPAL_INVOICE_SEND_UNCONFIRMED", {
+      paypalInvoiceId: invoice.paypalInvoiceId,
+      paypalStatus: confirmed?.status ?? null,
+    });
+  }
+
+  const mapped = mapPaypalInvoice(String(owner._id), {
+    ...confirmed,
+    create_time: confirmed.create_time ?? invoice.invoiceDate.toISOString(),
+    detail: {
+      ...confirmed.detail,
+      invoice_date: confirmed.detail?.invoice_date ?? dateOnly(invoice.invoiceDate),
+      currency_code: confirmed.detail?.currency_code ?? invoice.currency,
+      payment_term: confirmed.detail?.payment_term ?? (invoice.dueDate ? { due_date: dateOnly(invoice.dueDate) } : undefined),
+    },
+    primary_recipients: confirmed.primary_recipients ?? [{
+      billing_info: {
+        email_address: invoice.customerEmail ?? invoice.email,
+        name: { full_name: invoice.customerName ?? invoice.client },
+      },
+    }],
+    items: confirmed.items ?? [{ description: invoice.description }],
+    amount: confirmed.amount ?? { value: invoice.totalAmount ?? invoice.amount, currency_code: invoice.currency },
+  });
+  if (!mapped) {
+    throw new AppError(502, "PayPal confirmed sending, but did not return invoice details that PayLeak can synchronize. Sync PayPal invoices to refresh the record.", "PAYPAL_INVOICE_SEND_SYNC_REQUIRED", {
+      paypalInvoiceId: invoice.paypalInvoiceId,
+      paypalStatus: confirmed.status,
+    });
+  }
+  const updated = await Invoice.findOneAndUpdate(
+    { _id: invoice._id, userId: owner._id, paypalInvoiceId: invoice.paypalInvoiceId },
+    { $set: { ...mapped, paypalRequestId: invoice.paypalRequestId, paypalSendRequestId: requestId, paypalLastSyncedAt: new Date() } },
+    { new: true, runValidators: true },
+  ).lean();
+  if (!updated) {
+    throw new AppError(500, "PayPal sent the invoice, but PayLeak could not update it. Sync PayPal invoices to refresh the status.", "PAYPAL_INVOICE_SEND_PERSIST_FAILED", {
+      paypalInvoiceId: invoice.paypalInvoiceId,
+    });
+  }
+  return updated;
+}
+
 export async function syncPaypalInvoices(userId: string) {
   const owner = await assertConfiguredOwner(userId);
   const ownerId = String(owner._id);
@@ -376,7 +679,9 @@ export async function syncPaypalInvoices(userId: string) {
       clientIdLast4: oauth.clientIdLast4,
       applicationOAuth: "verified",
       merchantAccount: "not_returned_by_client_credentials_api",
-      invoiceReadPermission: oauth.invoiceReadScope,
+      invoiceReadPermission: "verified_by_api_request",
+      invoiceReadScopeClaim: oauth.invoiceReadScope,
+      invoiceWriteScopeClaim: oauth.invoiceWriteScope,
       invoicesInserted: 0,
       invoicesUpdated: 0,
       totalInvoicesStoredInMongoDB: await getOwnerInvoiceCount(ownerId),
@@ -384,50 +689,16 @@ export async function syncPaypalInvoices(userId: string) {
   }
   const { invoices: imported, pages, paypalTotalItems, paypalTotalPages, duplicateInvoicesSkipped } = search;
 
-  if (oauth.invoiceReadScope !== "present") {
-    throw new AppError(503, "PayPal did not grant the required Invoicing API read permission. No invoices were imported.", "PAYPAL_INVOICE_PERMISSION_REQUIRED", {
-      payLeakUserId: ownerId,
-      environment: env.PAYPAL_MODE,
-      paypalApplicationId: oauth.appId,
-      clientIdLast4: oauth.clientIdLast4,
-      applicationOAuth: "verified",
-      merchantAccount: "not_returned_by_client_credentials_api",
-      invoiceReadPermission: oauth.invoiceReadScope,
-      paypalHttpStatus: pages[0]?.httpStatus ?? null,
-      paypalTotalItems,
-      paypalTotalPages,
-      invoicesRetrieved: imported.length,
-      invoiceDetailsRetrieved: 0,
-      invoicesInserted: 0,
-      invoicesUpdated: 0,
-      duplicateInvoicesSkipped,
-      totalInvoicesStoredInMongoDB: await getOwnerInvoiceCount(ownerId),
-      pages,
-    });
-  }
-
   let invoiceDetailsRetrieved = 0;
   for (let index = 0; index < imported.length; index += 1) {
     const invoice = imported[index];
     if (!invoice) continue;
-    const status = invoice.status?.toUpperCase();
-    const needsPaymentDetails = ["PAID", "MARKED_AS_PAID", "PARTIALLY_PAID", "REFUNDED"].includes(status ?? "")
-      && !invoice.payment_summary;
-    if (!needsPaymentDetails || !invoice.id) continue;
+    if (!invoice.id) continue;
 
     let httpStatus: number | null = null;
     try {
       const details = await getInvoiceDetails(invoice.id, (responseStatus) => { httpStatus = responseStatus; });
-      imported[index] = {
-        ...invoice,
-        ...details,
-        detail: { ...invoice.detail, ...details.detail },
-        payment_summary: details.payment_summary ?? invoice.payment_summary,
-        primary_recipients: details.primary_recipients ?? invoice.primary_recipients,
-        amount: details.amount ?? invoice.amount,
-        links: details.links ?? invoice.links,
-        items: details.items ?? invoice.items,
-      };
+      imported[index] = mergePaypalInvoice(invoice, details);
       invoiceDetailsRetrieved += 1;
     } catch (error) {
       throw invoiceError(error, {
@@ -465,7 +736,7 @@ export async function syncPaypalInvoices(userId: string) {
     }
     const result = await Invoice.updateOne(
       { userId: owner._id, paypalInvoiceId: mapped.paypalInvoiceId },
-      { $set: mapped },
+      { $set: { ...mapped, paypalLastSyncedAt: new Date() } },
       { upsert: true, runValidators: true },
     );
     invoicesInserted += result.upsertedCount;

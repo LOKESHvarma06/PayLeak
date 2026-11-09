@@ -75,3 +75,130 @@ test("requests every PayPal Invoicing page and skips repeated invoice IDs", asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test("builds a single-currency PayPal invoice payload from validated invoice fields", async () => {
+  const { buildPaypalInvoicePayload } = await import("./paypalInvoiceService.js");
+  const payload = buildPaypalInvoicePayload({
+    client: "Jordan Lee",
+    email: "jordan@example.com",
+    amount: "200.00",
+    currency: "USD",
+    description: "Consulting services",
+    date: new Date("2026-11-09T00:00:00.000Z"),
+    due: new Date("2026-11-24T00:00:00.000Z"),
+  });
+
+  assert.equal(payload.detail.invoice_date, "2026-11-09");
+  assert.equal(payload.detail.currency_code, "USD");
+  assert.equal(payload.detail.payment_term.term_type, "DUE_ON_DATE_SPECIFIED");
+  assert.equal(payload.detail.payment_term.due_date, "2026-11-24");
+  assert.equal(payload.primary_recipients[0]?.billing_info.email_address, "jordan@example.com");
+  assert.deepEqual(payload.primary_recipients[0]?.billing_info.name, { given_name: "Jordan", surname: "Lee" });
+  assert.equal(payload.items[0]?.quantity, "1");
+  assert.deepEqual(payload.items[0]?.unit_amount, { currency_code: "USD", value: "200.00" });
+});
+
+test("creates invoices through PayPal with a request ID for safe retries", async () => {
+  const originalFetch = globalThis.fetch;
+  const { clearPaypalTokenCache } = await import("./paypalClient.js");
+  const { createPaypalInvoiceRecord } = await import("./paypalInvoiceService.js");
+  let requestUrl = "";
+  let requestId: string | null = null;
+  let prefer: string | null = null;
+  let requestBody: Record<string, unknown> = {};
+
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/v1/oauth2/token")) {
+      return new Response(JSON.stringify({
+        access_token: "temporary-test-token",
+        expires_in: 3600,
+        scope: "https://uri.paypal.com/services/invoicing/invoices/read",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    requestUrl = url;
+    requestId = new Headers(init?.headers).get("PayPal-Request-Id");
+    prefer = new Headers(init?.headers).get("Prefer");
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      id: "PAYPAL-INVOICE-123",
+      status: "DRAFT",
+      detail: { invoice_number: "INV-2001" },
+    }), { status: 201, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    clearPaypalTokenCache();
+    const created = await createPaypalInvoiceRecord({
+      client: "Jordan Lee",
+      email: "jordan@example.com",
+      amount: "200.00",
+      currency: "USD",
+      description: "Consulting services",
+      date: new Date("2026-11-09T00:00:00.000Z"),
+      due: new Date("2026-11-24T00:00:00.000Z"),
+    }, "d2719b58-b148-460e-995f-c2357406c060");
+    assert.equal(requestUrl, "https://api-m.sandbox.paypal.com/v2/invoicing/invoices");
+    assert.equal(requestId, "d2719b58-b148-460e-995f-c2357406c060");
+    assert.equal(prefer, "return=representation");
+    assert.equal(created.id, "PAYPAL-INVOICE-123");
+    assert.equal(created.status, "DRAFT");
+    assert.equal((requestBody.detail as { currency_code: string }).currency_code, "USD");
+  } finally {
+    clearPaypalTokenCache();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("sends a PayPal invoice separately and confirms its status after a 204 response", async () => {
+  const originalFetch = globalThis.fetch;
+  const { clearPaypalTokenCache } = await import("./paypalClient.js");
+  const { sendPaypalInvoiceRecord } = await import("./paypalInvoiceService.js");
+  const requests: Array<{ path: string; method: string; requestId: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/v1/oauth2/token")) {
+      return new Response(JSON.stringify({
+        access_token: "temporary-test-token",
+        expires_in: 3600,
+        scope: "https://uri.paypal.com/services/invoicing/invoices/write",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    requests.push({
+      path: url.pathname,
+      method: init?.method ?? "GET",
+      requestId: new Headers(init?.headers).get("PayPal-Request-Id"),
+    });
+    if (url.pathname.endsWith("/send")) return new Response(null, { status: 204 });
+    return new Response(JSON.stringify({
+      id: "PAYPAL-INVOICE-123",
+      status: "SENT",
+      detail: {
+        invoice_number: "INV-2001",
+        invoice_date: "2026-11-09",
+        currency_code: "USD",
+        payment_term: { due_date: "2026-11-24" },
+      },
+      primary_recipients: [{ billing_info: { email_address: "jordan@example.com" } }],
+      items: [{ description: "Consulting services" }],
+      amount: { value: "200.00", currency_code: "USD" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    clearPaypalTokenCache();
+    const result = await sendPaypalInvoiceRecord("PAYPAL-INVOICE-123", "ab2e1533-8526-4d7a-8e54-37d4800ec987");
+    assert.equal(result.status, "SENT");
+    assert.deepEqual(requests.map(({ path, method }) => ({ path, method })), [
+      { path: "/v2/invoicing/invoices/PAYPAL-INVOICE-123/send", method: "POST" },
+      { path: "/v2/invoicing/invoices/PAYPAL-INVOICE-123", method: "GET" },
+    ]);
+    assert.equal(requests[0]?.requestId, "ab2e1533-8526-4d7a-8e54-37d4800ec987");
+  } finally {
+    clearPaypalTokenCache();
+    globalThis.fetch = originalFetch;
+  }
+});

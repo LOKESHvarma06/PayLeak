@@ -36,13 +36,14 @@ fees or rates.
 | PUT | `/clients/:id` | Update a client |
 | DELETE | `/clients/:id` | Delete a client |
 | GET | `/invoices` | List the user's invoices |
-| POST | `/invoices` | Create a draft invoice |
-| POST | `/invoices/paypal/diagnostics` | Verify PayPal OAuth, invoice-read scope, and the first Invoicing API page |
-| POST | `/invoices/sync-paypal` | Import/update all PayPal invoices for the authenticated configured owner |
+| POST | `/invoices` | Create a PayPal Sandbox draft first, then save the confirmed invoice for the authenticated merchant owner |
+| POST | `/invoices/paypal/diagnostics` | Verify PayPal OAuth, invoice API access, and the first Invoicing API page |
+| POST | `/invoices/sync-paypal` | Retrieve PayPal invoice pages/details and import or update them for the configured owner |
+| POST | `/invoices/:id/paypal` | Create an existing local draft in PayPal and link the confirmed PayPal invoice to that same MongoDB record |
 | GET | `/invoices/:id` | Get one invoice |
 | PUT | `/invoices/:id` | Update an invoice |
 | DELETE | `/invoices/:id` | Delete an unpaid invoice |
-| POST | `/invoices/:id/send` | Currently reports unavailable; no invoice is sent |
+| POST | `/invoices/:id/send` | Send a PayPal-confirmed draft and update local status only after PayPal confirms sending |
 | GET | `/analytics` | Currency-separated dashboard metrics |
 | GET | `/analytics/dashboard` | Dashboard metrics (alias) |
 | GET | `/analytics/monthly` | Monthly gross totals by currency |
@@ -90,10 +91,56 @@ are granted and a verified, immutable PayLeak owner user ID is configured.
 Email matching is not an ownership proof. Connecting separate merchants
 requires eligible PayPal partner seller-consent access; app client credentials
 alone do not supply that authorization.
+
+Invoice creation requires an authenticated user matching
+`PAYPAL_ACCOUNT_OWNER_USER_ID`, Sandbox app credentials, and a UUID
+`Idempotency-Key` header. The API calls `POST /v2/invoicing/invoices` before
+writing to MongoDB, sends one line item using the submitted amount/currency,
+and reports success only after PayPal returns a confirmed draft with an invoice
+ID and status. Failed PayPal requests never fall back to local-only invoice
+creation. Reuse the same idempotency key after a timeout.
+
+Previously saved local-only draft invoices remain identifiable as
+`source=payleak`. `POST /invoices/:id/paypal` creates the remote draft and links
+its PayPal identifiers to that same MongoDB document. The sync operation is
+import-only; it never pushes local drafts or sends invoices. Sending is a
+separate `POST /v2/invoicing/invoices/{invoice_id}/send` request. PayLeak only
+updates the local status after PayPal confirms the result and refreshes invoice
+details/status from PayPal. The local update endpoint cannot override a
+PayPal-linked invoice's status.
+
+Invoice diagnostics report OAuth scope claims separately from actual Invoicing
+API access. They do not create or send a test invoice; those mutating operations
+can only be verified by a real operation. PayPal client-credentials does not
+identify the merchant, so confirm the REST app's Sandbox Business association
+in PayPal Developer Dashboard.
+
+Postman Sandbox workflow:
+1. Sign in with `POST /api/auth/login` and retain the HTTP-only cookie (or set a
+   bearer JWT). Use the backend base URL `http://localhost:5000/api`.
+2. Call `POST /api/invoices/paypal/diagnostics` with `{}`. Verify the Sandbox
+   environment, configured owner, OAuth result, and invoice API HTTP status.
+   OAuth alone does not verify invoice write access.
+3. Call `POST /api/invoices` with a UUID `Idempotency-Key` header and a validated
+   body, for example:
+   `{ "client": "Sandbox Buyer", "email": "<Sandbox buyer email>", "amount": "10.00", "currency": "USD", "description": "Sandbox test service", "date": "2026-11-09", "due": "2026-11-16" }`.
+   Success includes the PayPal invoice ID/number and confirmed status. On
+   denial, inspect the sanitized PayPal error name, message, HTTP status, and
+   debug ID; PayLeak does not create a local-only invoice.
+4. To link an existing PayLeak-only draft, call
+   `POST /api/invoices/{mongo_invoice_id}/paypal` with a UUID
+   `Idempotency-Key`.
+5. To send a confirmed draft, call
+   `POST /api/invoices/{mongo_invoice_id}/send`. This emails the invoice to the
+   Sandbox recipient; use only a Sandbox buyer address.
+6. Call `POST /api/invoices/sync-paypal` twice. Compare PayPal's `total_items`,
+   full detail retrieval count, MongoDB insert/update counts, and stored total.
+   The second run should update existing IDs rather than insert duplicates.
 PayPal invoice import uses the separate Invoicing API
-`GET /v2/invoicing/invoices?page=1&page_size=100&total_required=true` and requires
-the `https://uri.paypal.com/services/invoicing/invoices/read` OAuth scope. It
-paginates all returned pages and upserts by authenticated `userId` plus PayPal
+`GET /v2/invoicing/invoices?page=1&page_size=100&total_required=true`. The token's
+reported OAuth scope claims are shown separately from observed API access,
+because successful Invoicing API requests may succeed when a scope is not listed
+in the OAuth response. It paginates all returned pages and upserts by authenticated `userId` plus PayPal
 invoice ID. Import does not create invoices in PayPal or delete local invoices.
 The sync response reports OAuth app ID, scope/access diagnostics, page counts,
 insert/update/duplicate totals, and the MongoDB invoice count without returning

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useAuth } from "./AuthContext.jsx";
 import { fetchAnalytics } from "../services/analyticsService.js";
-import { fetchInvoices, saveInvoice, syncPaypalInvoices as syncPaypalInvoicesApi, updateInvoice } from "../services/invoiceService.js";
+import { fetchInvoices, publishInvoiceToPaypal as publishInvoiceToPaypalApi, saveInvoice, sendInvoice as sendInvoiceApi, syncPaypalInvoices as syncPaypalInvoicesApi, updateInvoice } from "../services/invoiceService.js";
 import { deleteNotification, fetchNotifications, markAllNotificationsRead, setNotificationRead } from "../services/notificationService.js";
 import { fetchTransactions, syncTransactions as syncPaypalTransactions } from "../services/transactionService.js";
 
@@ -52,16 +52,22 @@ export function AppProvider({ children }) {
     void refresh();
   }, [refresh]);
 
-  const createInvoice = useCallback(async (fields) => {
-    const invoice = await saveInvoice({ ...fields, amount: String(fields.amount) });
+  const createInvoice = useCallback(async (fields, idempotencyKey) => {
+    const invoice = await saveInvoice({ ...fields, amount: String(fields.amount) }, idempotencyKey);
     setInvoices((current) => [invoice, ...current]);
     return invoice;
   }, []);
 
-  const updateInvoiceStatus = useCallback(async (id, status) => {
-    const updated = await updateInvoice(id, { status });
-    setInvoices((current) => current.map((invoice) => invoice.id === id ? updated : invoice));
-    return updated;
+  const sendInvoice = useCallback(async (id) => {
+    const invoice = await sendInvoiceApi(id);
+    setInvoices((current) => current.map((item) => item.id === id ? invoice : item));
+    return invoice;
+  }, []);
+
+  const publishInvoiceToPaypal = useCallback(async (id, idempotencyKey) => {
+    const invoice = await publishInvoiceToPaypalApi(id, idempotencyKey);
+    setInvoices((current) => current.map((item) => item.id === id ? invoice : item));
+    return invoice;
   }, []);
 
   const syncTransactions = useCallback(async (startDate, endDate) => {
@@ -104,7 +110,8 @@ export function AppProvider({ children }) {
     error,
     refresh,
     createInvoice,
-    updateInvoiceStatus,
+    sendInvoice,
+    publishInvoiceToPaypal,
     syncTransactions,
     syncInvoices,
     updateNotification,
@@ -112,7 +119,7 @@ export function AppProvider({ children }) {
     removeNotification,
   }), [
     invoices, transactions, notifications, analytics, loading, error, refresh,
-    createInvoice, updateInvoiceStatus, syncTransactions, syncInvoices, updateNotification, updateNotifications, removeNotification,
+    createInvoice, sendInvoice, publishInvoiceToPaypal, syncTransactions, syncInvoices, updateNotification, updateNotifications, removeNotification,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

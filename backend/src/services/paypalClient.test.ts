@@ -25,7 +25,7 @@ test("refreshes a rejected access token and reports denied API permissions safel
       return new Response(JSON.stringify({
         access_token: `temporary-token-${tokenRequests}`,
         expires_in: 3600,
-        scope: "https://uri.paypal.com/services/reporting/search/read https://uri.paypal.com/services/invoicing/invoices/read",
+        scope: "https://uri.paypal.com/services/reporting/search/read https://uri.paypal.com/services/invoicing/invoices/read https://uri.paypal.com/services/invoicing/invoices/write",
         app_id: "APP-TEST-APP-ID",
       }), {
         status: 200,
@@ -72,6 +72,7 @@ test("refreshes a rejected access token and reports denied API permissions safel
     assert.deepEqual(await verifyPaypalInvoiceOAuth(), {
       authenticated: true,
       invoiceReadScope: "present",
+      invoiceWriteScope: "present",
       appId: "APP-TEST-APP-ID",
       clientIdLast4: "t-id",
     });

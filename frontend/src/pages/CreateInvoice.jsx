@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Bot, CheckCircle2, Eye, FilePlus2, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
@@ -16,6 +16,7 @@ export default function CreateInvoice() {
   const [showPreview, setShowPreview] = useState(false);
   const [saved, setSaved] = useState(null);
   const [saving, setSaving] = useState(false);
+  const pendingRequest = useRef(null);
   const { createInvoice } = useAppData();
   const navigate = useNavigate();
 
@@ -36,9 +37,15 @@ export default function CreateInvoice() {
     if (!validate()) return;
     setSaving(true);
     try {
-      const invoice = await createInvoice(form);
+      const requestPayload = { ...form, amount: String(form.amount) };
+      const fingerprint = JSON.stringify(requestPayload);
+      if (!pendingRequest.current || pendingRequest.current.fingerprint !== fingerprint) {
+        pendingRequest.current = { fingerprint, key: crypto.randomUUID() };
+      }
+      const invoice = await createInvoice(requestPayload, pendingRequest.current.key);
+      pendingRequest.current = null;
       setSaved(invoice);
-      toast.success("Invoice draft saved to your account.");
+      toast.success(`PayPal invoice ${invoice.invoiceNumber || invoice.paypalId || ""} created as a draft.`);
       navigate("/invoices");
     } catch (error) {
       toast.error(error.response?.data?.error?.message || "Could not save the invoice.");
@@ -49,7 +56,7 @@ export default function CreateInvoice() {
 
   return (
     <div className="page-enter">
-      <PageHeader eyebrow="BILLING / NEW INVOICE" title="Create an invoice" description="Save a draft to your account. PayPal delivery is unavailable until its Invoicing integration is enabled." action={<Link className="button secondary" to="/invoices"><ArrowLeft size={16} /> Back to invoices</Link>} />
+      <PageHeader eyebrow="BILLING / NEW INVOICE" title="Create an invoice" description="Create a draft in PayPal Sandbox and save its confirmed invoice details to PayLeak. Sending is a separate action." action={<Link className="button secondary" to="/invoices"><ArrowLeft size={16} /> Back to invoices</Link>} />
       <div className="invoice-create-grid">
         <div className="invoice-form-column">
           <section className="ai-create-card">
@@ -69,17 +76,17 @@ export default function CreateInvoice() {
               <label className="field-label">Invoice date<input type="date" value={form.date} onChange={(event) => update("date", event.target.value)} /></label>
               <label className="field-label">Due date *<input type="date" value={form.due} onChange={(event) => update("due", event.target.value)} /></label>
             </div>
-            <div className="form-footer"><span><CheckCircle2 size={15} /> Drafts are stored in your account</span><button className="button secondary" onClick={() => setShowPreview(true)}><Eye size={16} /> Preview invoice</button></div>
+            <div className="form-footer"><span><CheckCircle2 size={15} /> PayPal must confirm the draft before it is saved</span><button className="button secondary" onClick={() => setShowPreview(true)}><Eye size={16} /> Preview invoice</button></div>
           </section>
-          <div className="form-actions"><button className="button primary" onClick={saveDraft} disabled={saving}>{saving ? <span className="spinner" /> : <><FilePlus2 size={16} /> Save draft</>}</button></div>
+          <div className="form-actions"><button className="button primary" onClick={saveDraft} disabled={saving}>{saving ? <span className="spinner" /> : <><FilePlus2 size={16} /> Create PayPal draft</>}</button></div>
         </div>
         <aside className="invoice-side-note">
-          <div className="side-note-icon"><FilePlus2 size={19} /></div><h3>Before you save</h3><p>This creates a draft record in your PayLeak account. It does not send an invoice or email.</p>
+          <div className="side-note-icon"><FilePlus2 size={19} /></div><h3>Before you create</h3><p>PayLeak first creates a draft in PayPal Sandbox. It is not sent to the customer until you choose Send.</p>
           <div className="side-note-rule" /><div className="side-note-row"><CheckCircle2 size={15} /><span>Confirm client details and currency</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Check your due date and description</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Review the preview before saving</span></div>
-          {saved && <div className="saved-record"><b>Last saved draft</b><span>{saved.id}</span><small>Status: {saved.status}</small></div>}
+          {saved && <div className="saved-record"><b>Last PayPal draft</b><span>{saved.paypalId || saved.id}</span><small>Status: {saved.status}</small></div>}
         </aside>
       </div>
-      {showPreview && <Modal title="Invoice preview" onClose={() => setShowPreview(false)}><div className="invoice-preview"><div className="preview-brand">pay<span>leak</span><small>INVOICE DRAFT · NOT SENT</small></div><div className="preview-line"><span>Invoice to</span><b>{form.client || "Client name"}</b><small>{form.email || "client@email.com"}</small></div><div className="preview-line"><span>Invoice date</span><b>{form.date || "—"}</b></div><div className="preview-line"><span>Due date</span><b>{form.due || "—"}</b></div><div className="preview-description">{form.description || "Service description"}</div><div className="preview-total"><span>Total due</span><b>{money(Number(form.amount) || 0, form.currency)}</b></div></div><div className="modal-actions"><button className="button secondary" onClick={() => setShowPreview(false)}>Continue editing</button><button className="button primary" onClick={() => setShowPreview(false)}>Close preview</button></div></Modal>}
+      {showPreview && <Modal title="Invoice preview" onClose={() => setShowPreview(false)}><div className="invoice-preview"><div className="preview-brand">pay<span>leak</span><small>INVOICE PREVIEW · NOT SENT</small></div><div className="preview-line"><span>Invoice to</span><b>{form.client || "Client name"}</b><small>{form.email || "client@email.com"}</small></div><div className="preview-line"><span>Invoice date</span><b>{form.date || "—"}</b></div><div className="preview-line"><span>Due date</span><b>{form.due || "—"}</b></div><div className="preview-description">{form.description || "Service description"}</div><div className="preview-total"><span>Total due</span><b>{money(Number(form.amount) || 0, form.currency)}</b></div></div><div className="modal-actions"><button className="button secondary" onClick={() => setShowPreview(false)}>Continue editing</button><button className="button primary" onClick={() => setShowPreview(false)}>Close preview</button></div></Modal>}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { Types } from "mongoose";
 import { Client } from "../models/Client.js";
 import { Invoice } from "../models/Invoice.js";
 import { AppError } from "../utils/errors.js";
-import { ensurePaypalInvoiceIndex } from "./invoiceIndexService.js";
+import { createPaypalInvoice, publishLocalInvoiceToPaypal, sendPaypalInvoice } from "./paypalInvoiceService.js";
 
 export async function listInvoices(userId: string) {
   const invoices = await Invoice.find({ userId }).sort({ createdAt: -1 }).lean();
@@ -11,28 +11,19 @@ export async function listInvoices(userId: string) {
 
 export async function createInvoice(userId: string, input: {
   clientId?: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date;
-}) {
-  await ensurePaypalInvoiceIndex();
+}, requestId: string) {
   let clientId: Types.ObjectId | null = null;
   if (input.clientId) {
     const client = await Client.findOne({ _id: input.clientId, userId });
     if (!client) throw new AppError(404, "Client not found.", "CLIENT_NOT_FOUND");
     clientId = client._id;
   }
-  const invoice = await Invoice.create({
-    userId,
-    clientId,
-    client: input.client,
-    email: input.email,
-    amount: input.amount,
-    currency: input.currency,
-    description: input.description,
-    invoiceDate: input.date,
-    dueDate: input.due,
-    status: "Draft",
-    source: "payleak",
-  });
-  return toFrontendInvoice(invoice.toObject());
+  const invoice = await createPaypalInvoice(userId, { ...input, clientId: clientId ? String(clientId) : undefined }, requestId);
+  return toFrontendInvoice(invoice);
+}
+
+export async function publishInvoiceToPaypal(userId: string, id: string, requestId: string) {
+  return toFrontendInvoice(await publishLocalInvoiceToPaypal(userId, id, requestId));
 }
 
 export async function getInvoice(userId: string, id: string) {
@@ -42,8 +33,13 @@ export async function getInvoice(userId: string, id: string) {
 }
 
 export async function updateInvoice(userId: string, id: string, input: Partial<{
-  clientId: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date; status: "Draft" | "Sent" | "Partially Paid" | "Paid" | "Overdue" | "Cancelled" | "Refunded";
+  clientId: string; client: string; email: string; amount: string; currency: string; description: string; date: Date; due: Date;
 }>) {
+  const existing = await Invoice.findOne({ _id: id, userId }).select("source paypalRequestId");
+  if (!existing) throw new AppError(404, "Invoice not found.", "INVOICE_NOT_FOUND");
+  if (existing.source === "paypal" || existing.paypalRequestId) {
+    throw new AppError(409, "PayPal-linked invoices are managed by PayPal. Sync the invoice to refresh its details and status.", "PAYPAL_INVOICE_MANAGED");
+  }
   const fields: Record<string, unknown> = { ...input };
   if (input.date) fields.invoiceDate = input.date;
   if (input.due) fields.dueDate = input.due;
@@ -65,9 +61,7 @@ export async function deleteInvoice(userId: string, id: string) {
 }
 
 export async function sendInvoice(userId: string, id: string) {
-  const invoice = await Invoice.findOne({ _id: id, userId });
-  if (!invoice) throw new AppError(404, "Invoice not found.", "INVOICE_NOT_FOUND");
-  throw new AppError(503, "Sending invoices requires a verified PayPal merchant connection and Invoicing API permission. The invoice was not sent.", "PAYPAL_INVOICING_UNAVAILABLE");
+  return toFrontendInvoice(await sendPaypalInvoice(userId, id));
 }
 
 function toFrontendInvoice(invoice: {
@@ -76,6 +70,7 @@ function toFrontendInvoice(invoice: {
   invoiceNumber?: string | null; customerEmail?: string | null; customerName?: string | null;
   subtotal?: string | null; tax?: string | null; totalAmount?: string | null; paymentAmount?: string | null;
   paymentDate?: Date | null; invoiceUrl?: string | null; source?: string;
+  paypalStatus?: string | null; paypalLastSyncedAt?: Date | null;
 }) {
   const id = String(invoice._id);
   let status = invoice.status;
@@ -104,5 +99,7 @@ function toFrontendInvoice(invoice: {
     invoiceUrl: invoice.invoiceUrl,
     paypalId: invoice.paypalInvoiceId,
     source: invoice.source ?? "payleak",
+    paypalStatus: invoice.paypalStatus ?? null,
+    paypalLastSyncedAt: invoice.paypalLastSyncedAt?.toISOString() ?? null,
   };
 }

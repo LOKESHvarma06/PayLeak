@@ -11,6 +11,7 @@ interface TokenResponse {
 const transactionSearchScope = "https://uri.paypal.com/services/reporting/search/read";
 let tokenCache: { value: string; expiresAt: number; scopes: string[]; appId: string | null } | undefined;
 const invoiceReadScope = "https://uri.paypal.com/services/invoicing/invoices/read";
+const invoiceWriteScope = "https://uri.paypal.com/services/invoicing/invoices/write";
 
 async function getAccessToken(forceRefresh = false) {
   if (!env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) {
@@ -90,6 +91,9 @@ export async function verifyPaypalInvoiceOAuth() {
     invoiceReadScope: token.scopes.length === 0
       ? "not_reported"
       : token.scopes.includes(invoiceReadScope) ? "present" : "missing",
+    invoiceWriteScope: token.scopes.length === 0
+      ? "not_reported"
+      : token.scopes.includes(invoiceWriteScope) ? "present" : "missing",
     appId: token.appId,
     clientIdLast4: env.PAYPAL_CLIENT_ID.slice(-4),
   };
@@ -124,7 +128,12 @@ export async function paypalRequest<T>(
       throw new AppError(502, "PayPal rejected the refreshed application token.", "PAYPAL_TOKEN_REJECTED");
     }
     if (!response.ok) {
-      let payload: { name?: unknown; message?: unknown; debug_id?: unknown } = {};
+      let payload: {
+        name?: unknown;
+        message?: unknown;
+        debug_id?: unknown;
+        details?: Array<{ issue?: unknown; description?: unknown }>;
+      } = {};
       try {
         payload = await response.json() as typeof payload;
       } catch {
@@ -133,15 +142,21 @@ export async function paypalRequest<T>(
       const paypalErrorName = typeof payload.name === "string" ? payload.name : null;
       const paypalMessage = typeof payload.message === "string" ? payload.message : null;
       const debugId = typeof payload.debug_id === "string" ? payload.debug_id : null;
+      const paypalIssues = (payload.details ?? []).flatMap((detail) => {
+        const issue = typeof detail.issue === "string" ? detail.issue : null;
+        const description = typeof detail.description === "string" ? detail.description : null;
+        return issue || description ? [{ issue, description }] : [];
+      });
       throw new AppError(
         response.status === 403 ? 503 : 502,
         response.status === 403
           ? "PayPal denied this API request. Check the app permissions and Sandbox merchant association using the returned PayPal error and debug ID."
           : `PayPal API request failed with status ${response.status}.`,
         response.status === 403 ? "PAYPAL_PERMISSION_DENIED" : "PAYPAL_API_ERROR",
-        { httpStatus: response.status, paypalErrorName, paypalMessage, debugId },
+        { httpStatus: response.status, paypalErrorName, paypalMessage, paypalIssues, debugId },
       );
     }
+    if (response.status === 204) return undefined as T;
     try {
       return await response.json() as T;
     } catch {

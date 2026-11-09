@@ -12,8 +12,23 @@ export async function diagnosePaypalInvoices() {
   return responseData(await api.post(`${endpoints.invoices}/paypal/diagnostics`, {}, { timeout: 30000 }));
 }
 
-export async function saveInvoice(invoice) {
-  return responseData(await api.post(endpoints.invoices, invoice));
+export async function saveInvoice(invoice, idempotencyKey) {
+  return responseData(await api.post(endpoints.invoices, invoice, {
+    headers: { "Idempotency-Key": idempotencyKey },
+    timeout: 30000,
+  }));
+}
+
+export async function sendInvoice(id) {
+  return responseData(await api.post(`${endpoints.invoices}/${encodeURIComponent(id)}/send`, {}, { timeout: 30000 }));
+}
+
+export async function publishInvoiceToPaypal(id, idempotencyKey) {
+  return responseData(await api.post(
+    `${endpoints.invoices}/${encodeURIComponent(id)}/paypal`,
+    {},
+    { headers: { "Idempotency-Key": idempotencyKey }, timeout: 30000 },
+  ));
 }
 
 export async function updateInvoice(id, fields) {
