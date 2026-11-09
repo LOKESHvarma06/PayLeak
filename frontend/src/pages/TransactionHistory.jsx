@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ExternalLink, RefreshCw, Search } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import Panel from "../components/Panel.jsx";
@@ -23,6 +23,8 @@ function displayAmount(value, currency) {
 }
 
 export default function TransactionHistory() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTransactionId = searchParams.get("transaction") || "";
   const [page, setPage] = useState(1);
   const [currency, setCurrency] = useState("");
   const [status, setStatus] = useState("");
@@ -31,10 +33,14 @@ export default function TransactionHistory() {
   const [result, setResult] = useState({ items: [], total: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(requestedTransactionId);
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+
+  useEffect(() => {
+    if (requestedTransactionId) setSelectedId(requestedTransactionId);
+  }, [requestedTransactionId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -143,7 +149,12 @@ export default function TransactionHistory() {
       </Panel>
 
       {selectedId && (
-        <Modal title="Transaction details" onClose={() => setSelectedId("")}>
+        <Modal title="Transaction details" onClose={() => {
+          setSelectedId("");
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete("transaction");
+          setSearchParams(nextParams, { replace: true });
+        }}>
           {detailLoading && <div className="page-loading"><span className="spinner" /> Loading transaction…</div>}
           {detailError && <div className="inline-error" role="alert">{detailError}</div>}
           {detail && (

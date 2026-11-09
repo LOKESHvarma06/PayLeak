@@ -4,6 +4,7 @@ import { Transaction } from "../models/Transaction.js";
 import { User } from "../models/User.js";
 import { AppError } from "../utils/errors.js";
 import { paypalRequest, verifyPaypalApplicationOAuth } from "./paypalClient.js";
+import { calculatePaypalTransactionValues, explainNetMismatch } from "./analytics/paypalCalculationService.js";
 
 interface PaypalSearchItem {
   transaction_info?: {
@@ -12,6 +13,13 @@ interface PaypalSearchItem {
     transaction_status?: string;
     transaction_amount?: { value?: string; currency_code?: string };
     fee_amount?: { value?: string; currency_code?: string };
+    net_amount?: { value?: string; currency_code?: string };
+    exchange_rate?: string;
+    converted_amount?: { value?: string; currency_code?: string };
+    insurance_amount?: { value?: string; currency_code?: string };
+    shipping_amount?: { value?: string; currency_code?: string };
+    shipping_discount_amount?: { value?: string; currency_code?: string };
+    discount_amount?: { value?: string; currency_code?: string };
     transaction_initiation_date?: string;
     transaction_updated_date?: string;
   };
@@ -343,15 +351,81 @@ export async function syncPaypalTransactions(userId: string, startDate: Date, en
     const amount = info?.transaction_amount;
     const started = info?.transaction_initiation_date;
     if (!transactionId || !amount?.value || !amount.currency_code || !started || !Number.isFinite(Date.parse(started))) return [];
+    const fee = info.fee_amount;
+    const reportedNet = info.net_amount ?? null;
+    const calculation = calculatePaypalTransactionValues({
+      gross: amount,
+      fee,
+      reportedNet,
+      transactionType: info.transaction_event_code ?? "UNKNOWN",
+      status: info.transaction_status ?? "UNKNOWN",
+    });
+    const otherFinancialFields = [
+      info.insurance_amount && "insurance_amount",
+      info.shipping_amount && "shipping_amount",
+      info.shipping_discount_amount && "shipping_discount_amount",
+      info.discount_amount && "discount_amount",
+    ].filter((field): field is string => Boolean(field));
+    const netVerificationReasons = calculation.netVerification.status === "MISMATCH"
+      ? explainNetMismatch({
+        gross: amount,
+        fee,
+        reportedNet,
+        calculatedNet: calculation.calculatedNet,
+        transactionType: info.transaction_event_code ?? "UNKNOWN",
+        status: info.transaction_status ?? "UNKNOWN",
+        otherFinancialFields,
+      })
+      : calculation.netVerification.status === "NOT_APPLICABLE"
+        ? explainNetMismatch({
+          gross: amount,
+          fee,
+          reportedNet,
+          calculatedNet: calculation.calculatedNet,
+          transactionType: info.transaction_event_code ?? "UNKNOWN",
+          status: info.transaction_status ?? "UNKNOWN",
+          otherFinancialFields,
+        })
+        : [];
+    const conversionAvailable = Boolean(info.exchange_rate || info.converted_amount?.value);
     return [{
       paypalTransactionId: transactionId,
       transactionType: info.transaction_event_code ?? "UNKNOWN",
       status: info.transaction_status ?? "UNKNOWN",
       grossAmount: amount.value,
       grossCurrency: amount.currency_code,
-      feeAmount: info.fee_amount?.value ?? null,
-      feeCurrency: info.fee_amount?.currency_code ?? null,
-      feeSource: info.fee_amount?.value && info.fee_amount?.currency_code ? "actual_paypal" as const : "unavailable" as const,
+      feeAmount: fee?.value ?? null,
+      feeCurrency: fee?.currency_code ?? null,
+      feeSource: fee?.value != null && fee.currency_code ? "actual_paypal" as const : "unavailable" as const,
+      paypalReportedNetAmount: reportedNet?.value ?? null,
+      paypalReportedNetCurrency: reportedNet?.currency_code ?? null,
+      payleakCalculatedNetAmount: calculation.calculatedNet?.value ?? null,
+      payleakCalculatedNetCurrency: calculation.calculatedNet?.currency_code ?? null,
+      netVerificationStatus: calculation.netVerification.status,
+      netVerificationDifference: calculation.netVerification.difference,
+      netVerificationExplanation: calculation.netVerification.explanation,
+      netVerificationReasons,
+      conversion: conversionAvailable ? {
+        sourceAmount: amount.value,
+        sourceCurrency: amount.currency_code,
+        targetAmount: info.converted_amount?.value ?? null,
+        targetCurrency: info.converted_amount?.currency_code ?? null,
+        exchangeRate: info.exchange_rate ?? null,
+        rateDirection: null,
+        source: "actual_paypal" as const,
+        reference: null,
+        convertedAt: info.transaction_updated_date ? new Date(info.transaction_updated_date) : null,
+      } : {
+        sourceAmount: null,
+        sourceCurrency: null,
+        targetAmount: null,
+        targetCurrency: null,
+        exchangeRate: null,
+        rateDirection: null,
+        source: "unavailable" as const,
+        reference: null,
+        convertedAt: null,
+      },
       transactionDate: new Date(started),
       financialDataStatus: "incomplete" as const,
       rawPaypal: item,
@@ -412,10 +486,30 @@ export async function syncPaypalTransactions(userId: string, startDate: Date, en
   );
   return {
     ...diagnostics,
+    syncedTransactionIds: transactions.map((transaction) => transaction.paypalTransactionId),
     retrieved: items.length,
     stored: totalRecordsInserted,
     skipped: search.duplicateTransactionIdsSkipped + items.length - transactions.length,
     lastSyncedAt: retrievedAt,
+  };
+}
+
+export async function refreshPaypalTransaction(userId: string, transactionId: string) {
+  const existing = await Transaction.findOne({ userId, paypalTransactionId: transactionId }).select("transactionDate");
+  if (!existing) throw new AppError(404, "Transaction not found.", "TRANSACTION_NOT_FOUND");
+  const startDate = new Date(existing.transactionDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const endDate = new Date(existing.transactionDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const sync = await syncPaypalTransactions(userId, startDate, endDate);
+  if (!sync.syncedTransactionIds.includes(transactionId)) {
+    throw new AppError(404, "PayPal did not return this transaction in the refresh response.", "PAYPAL_TRANSACTION_NOT_RETURNED");
+  }
+  const refreshed = await Transaction.findOne({ userId, paypalTransactionId: transactionId })
+    .select("paypalTransactionId retrievedAt netVerificationStatus");
+  if (!refreshed) throw new AppError(500, "The refreshed PayPal transaction could not be loaded.", "PAYPAL_TRANSACTION_REFRESH_FAILED");
+  return {
+    transactionId: refreshed.paypalTransactionId,
+    retrievedAt: refreshed.retrievedAt,
+    netVerificationStatus: refreshed.netVerificationStatus,
   };
 }
 

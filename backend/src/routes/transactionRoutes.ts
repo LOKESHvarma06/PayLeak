@@ -6,7 +6,7 @@ import { success } from "../utils/response.js";
 import { z } from "zod";
 import { syncBody, transactionQuery } from "../validators/transactions.js";
 import { getTransaction, listTransactions, transactionBreakdown } from "../services/transactionService.js";
-import { syncPaypalTransactions } from "../services/paypalService.js";
+import { refreshPaypalTransaction, syncPaypalTransactions } from "../services/paypalService.js";
 import { AppError } from "../utils/errors.js";
 import { createNotification } from "../services/notificationService.js";
 
@@ -27,6 +27,11 @@ transactionRoutes.post("/sync", validateBody(syncBody), asyncHandler(async (req,
     dedupeKey: `transaction-sync:${result.lastSyncedAt.toISOString().slice(0, 13)}`,
   });
   return success(res, result);
+}));
+
+transactionRoutes.post("/:id/refresh", asyncHandler(async (req, res) => {
+  const id = z.string().min(1).max(160).parse(req.params.id);
+  return success(res, await refreshPaypalTransaction(getUserId(req), id));
 }));
 
 transactionRoutes.get("/:id", asyncHandler(async (req, res) => {

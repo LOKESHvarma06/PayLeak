@@ -28,8 +28,10 @@ fees or rates.
 | GET | `/transactions` | List the authenticated user's transactions (paginated/filterable) |
 | POST | `/transactions/sync` | Sync PayPal transactions for the configured owner |
 | GET | `/transactions/:id` | Get one transaction |
+| POST | `/transactions/:id/refresh` | Refresh one transaction from PayPal Transaction Search and upsert the returned record |
 | GET | `/transactions/:id/fee-breakdown` | Get actual fee details or report unavailable |
 | GET | `/transactions/:id/currency-breakdown` | Get currency conversion and payout details |
+| GET | `/analytics/transactions/:transactionId/ai-analysis` | Return PayPal-reported gross, fee, net, conversion, and payout values separately from deterministic PayLeak calculations, verification status, discrepancy reasons, and a cached transaction-specific Gemini explanation; authenticated and rate-limited. Add `?regenerate=true` to request a fresh explanation |
 | GET | `/clients` | List the user's clients |
 | POST | `/clients` | Create a client |
 | GET | `/clients/:id` | Get one client |
@@ -68,6 +70,12 @@ fees or rates.
 | POST | `/ai/assistant` | AI chat alias |
 | POST | `/ai/diagnostics` | Test Google Gemini key availability, model, and API connectivity without returning credentials |
 
+Transaction analysis uses only fields returned by PayPal Transaction Search and PayLeak's
+deterministic decimal calculation. A calculated net is available only for a non-refund
+transaction when the actual PayPal gross and fee use the same currency. Verification
+statuses are `MATCH`, `MISMATCH`, `NOT_AVAILABLE`, or `NOT_APPLICABLE`; a PayPal refresh
+updates the selected transaction from Transaction Search and does not infer a bank payout.
+
 AI chat accepts `{ "question": "...", "history": [{ "role": "user|assistant", "text": "..." }] }`.
 The backend fetches transactions, invoices, and currency conversions using the
 authenticated user's ID and sends only those records plus recent conversation turns
@@ -77,6 +85,14 @@ environment (`gemini-3.5-flash-lite` by default; `gemini-2.5-flash` was not
 available to this AI Studio key when verified). Diagnostics makes a minimal Gemini
 request and returns provider, model, and connectivity status; it never returns the
 API key.
+
+Transaction AI analysis reads only the authenticated user's stored PayPal
+transaction record. PayLeak calculates same-currency net-after-fee and fee
+percentage using decimal arithmetic; Gemini only produces explanatory text,
+insights, and recommendations and is not allowed to provide financial amounts.
+Payer identity is omitted from the LLM prompt. Missing exchange-rate benchmarks,
+withdrawal records, and bank settlement data remain unavailable rather than
+being estimated. Pass `?regenerate=true` to request a fresh explanation.
 
 `POST /paypal/orders` requires an `Idempotency-Key` UUID header and a validated
 amount, currency, and description. The browser redirects the buyer to PayPal's
