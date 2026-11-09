@@ -581,7 +581,10 @@ export async function publishLocalInvoiceToPaypal(userId: string, localInvoiceId
   try {
     created = await createPaypalInvoiceRecord(input, stableRequestId);
   } catch (error) {
-    if (error instanceof AppError && error.code === "PAYPAL_API_ERROR" && error.statusCode === 400) {
+    if (error instanceof AppError && error.statusCode === 422 && [
+      "PAYPAL_CURRENCY_UNSUPPORTED",
+      "PAYPAL_INVALID_REQUEST",
+    ].includes(error.code)) {
       await Invoice.updateOne(
         { _id: pendingInvoice._id, userId: owner._id, paypalRequestId: stableRequestId, paypalInvoiceId: { $exists: false } },
         { $unset: { paypalRequestId: 1 } },

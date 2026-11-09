@@ -6,12 +6,12 @@ import { success } from "../utils/response.js";
 import { AppError } from "../utils/errors.js";
 import { Invoice } from "../models/Invoice.js";
 import { createInvoice, deleteInvoice, getInvoice, listInvoices, publishInvoiceToPaypal, sendInvoice, updateInvoice } from "../services/invoiceService.js";
-import { invoiceBody, invoiceFields } from "../validators/invoice.js";
+import { invoiceBody, invoiceFields, validateInvoiceAmountPrecision } from "../validators/invoice.js";
 import { idParam } from "../validators/common.js";
 import { z } from "zod";
 import { diagnosePaypalInvoiceAccess, syncPaypalInvoices } from "../services/paypalInvoiceService.js";
 
-const invoicePatch = invoiceFields.partial();
+const invoicePatch = invoiceFields.partial().superRefine(validateInvoiceAmountPrecision);
 const idempotencyKey = z.string().uuid();
 export const invoiceRoutes = Router();
 invoiceRoutes.use(requireAuth);

@@ -53,15 +53,19 @@ test("refreshes a rejected access token and reports denied API permissions safel
     assert.equal(apiRequests, 2);
     assert.deepEqual(authHeaders, ["Bearer temporary-token-1", "Bearer temporary-token-2"]);
 
-    await assert.rejects(
-      paypalRequest("/forbidden"),
-      (error: unknown) => error instanceof Error
-        && "code" in error && error.code === "PAYPAL_PERMISSION_DENIED"
-        && "details" in error
-        && (error.details as { httpStatus?: number; paypalErrorName?: string; debugId?: string }).httpStatus === 403
-        && (error.details as { paypalErrorName?: string }).paypalErrorName === "AUTHORIZATION_FAILED"
-        && (error.details as { debugId?: string }).debugId === "SAFE-TEST-ID",
-    );
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      await assert.rejects(
+        paypalRequest("/forbidden"),
+        (error: unknown) => error instanceof Error
+          && "code" in error && error.code === "PAYPAL_PERMISSION_DENIED"
+          && "statusCode" in error && error.statusCode === 503
+          && "details" in error && error.details === undefined,
+      );
+    } finally {
+      console.error = originalConsoleError;
+    }
     assert.equal(authHeaders.some((header) => header.includes("test-client-secret")), false);
     assert.deepEqual(await verifyPaypalApplicationOAuth(), {
       authenticated: true,

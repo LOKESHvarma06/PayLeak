@@ -140,20 +140,47 @@ export async function paypalRequest<T>(
         // Keep the HTTP status when PayPal returns a non-JSON error.
       }
       const paypalErrorName = typeof payload.name === "string" ? payload.name : null;
-      const paypalMessage = typeof payload.message === "string" ? payload.message : null;
       const debugId = typeof payload.debug_id === "string" ? payload.debug_id : null;
       const paypalIssues = (payload.details ?? []).flatMap((detail) => {
         const issue = typeof detail.issue === "string" ? detail.issue : null;
         const description = typeof detail.description === "string" ? detail.description : null;
         return issue || description ? [{ issue, description }] : [];
       });
+      const unsupportedCurrency = response.status === 400 && paypalIssues.some(({ issue, description }) =>
+        issue === "CURRENCY_NOT_SUPPORTED"
+        || (description ?? "").toLowerCase().includes("currency code is not valid"),
+      );
+      console.error("PayPal API request rejected", {
+        method: init.method ?? "GET",
+        endpoint: path.split("?")[0],
+        httpStatus: response.status,
+        paypalErrorName,
+        paypalIssueCodes: paypalIssues.map(({ issue }) => issue).filter(Boolean),
+        currencyRejected: unsupportedCurrency,
+        debugId,
+      });
+      if (unsupportedCurrency) {
+        throw new AppError(
+          422,
+          "This currency is not available for your PayPal account. Choose another currency.",
+          "PAYPAL_CURRENCY_UNSUPPORTED",
+        );
+      }
+      if (response.status === 400) {
+        throw new AppError(
+          422,
+          "PayPal could not accept the invoice details. Check the currency and invoice information.",
+          "PAYPAL_INVALID_REQUEST",
+        );
+      }
       throw new AppError(
-        response.status === 403 ? 503 : 502,
+        response.status === 403 || response.status === 429 || response.status >= 500 ? 503 : 502,
         response.status === 403
-          ? "PayPal denied this API request. Check the app permissions and Sandbox merchant association using the returned PayPal error and debug ID."
+          ? "PayPal denied this API request. Check the app permissions and Sandbox merchant association."
+          : response.status === 429 || response.status >= 500
+            ? "PayPal is temporarily unavailable. Please try again later."
           : `PayPal API request failed with status ${response.status}.`,
         response.status === 403 ? "PAYPAL_PERMISSION_DENIED" : "PAYPAL_API_ERROR",
-        { httpStatus: response.status, paypalErrorName, paypalMessage, paypalIssues, debugId },
       );
     }
     if (response.status === 204) return undefined as T;

@@ -7,6 +7,7 @@ import PageHeader from "../components/PageHeader.jsx";
 import { useAppData } from "../context/AppContext.jsx";
 import { extractInvoiceDetails } from "../services/invoiceService.js";
 import { money } from "../utils/formatters.js";
+import { paypalCurrencySymbol, paypalInvoiceCurrencies } from "../utils/paypalCurrencies.js";
 
 const blankInvoice = { client: "", email: "", amount: "", currency: "USD", description: "", date: new Date().toISOString().slice(0, 10), due: "" };
 
@@ -31,6 +32,17 @@ export default function CreateInvoice() {
       toast.error("Complete the client, valid email, amount, description, and due date.");
       return false;
     }
+    const currency = paypalInvoiceCurrencies.find((item) => item.code === form.currency);
+    if (!currency) {
+      toast.error(form.currency === "INR"
+        ? "PayPal does not support direct INR invoices. Choose a supported currency."
+        : "Choose a currency supported for PayPal invoicing.");
+      return false;
+    }
+    if ((String(form.amount).split(".")[1]?.length ?? 0) > currency.fractionDigits) {
+      toast.error(`${currency.code} amounts cannot have more than ${currency.fractionDigits} decimal places.`);
+      return false;
+    }
     return true;
   };
   const saveDraft = async () => {
@@ -48,7 +60,13 @@ export default function CreateInvoice() {
       toast.success(`PayPal invoice ${invoice.invoiceNumber || invoice.paypalId || ""} created as a draft.`);
       navigate("/invoices");
     } catch (error) {
-      toast.error(error.response?.data?.error?.message || "Could not save the invoice.");
+      const code = error.response?.data?.error?.code;
+      const messages = {
+        PAYPAL_CURRENCY_UNSUPPORTED: "This currency is not available for your PayPal account. Choose another currency.",
+        PAYPAL_PERMISSION_DENIED: "Your PayPal connection needs attention. Check the PayPal invoice permissions.",
+        PAYPAL_NOT_CONFIGURED: "PayPal invoicing is not configured. Contact your administrator.",
+      };
+      toast.error(messages[code] || "Unable to create the PayPal invoice. Please check the details and try again.");
     } finally {
       setSaving(false);
     }
@@ -70,8 +88,8 @@ export default function CreateInvoice() {
             <div className="form-grid">
               <label className="field-label">Client name *<input value={form.client} onChange={(event) => update("client", event.target.value)} placeholder="e.g. Jordan Lee" /></label>
               <label className="field-label">Client email *<input type="email" value={form.email} onChange={(event) => update("email", event.target.value)} placeholder="client@company.com" /></label>
-              <label className="field-label">Amount *<div className="amount-field"><span>{form.currency === "EUR" ? "€" : form.currency === "GBP" ? "£" : form.currency === "INR" ? "₹" : "$"}</span><input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => update("amount", event.target.value)} placeholder="0.00" /></div></label>
-              <label className="field-label">Currency<select value={form.currency} onChange={(event) => update("currency", event.target.value)}>{["USD", "EUR", "GBP", "INR"].map((currency) => <option key={currency}>{currency}</option>)}</select></label>
+              <label className="field-label">Amount *<div className="amount-field"><span>{paypalCurrencySymbol(form.currency)}</span><input type="number" min={form.currency === "JPY" || form.currency === "HUF" ? "1" : "0.01"} step={form.currency === "JPY" || form.currency === "HUF" ? "1" : "0.01"} value={form.amount} onChange={(event) => update("amount", event.target.value)} placeholder="0.00" /></div></label>
+              <label className="field-label">Currency<select value={form.currency} onChange={(event) => update("currency", event.target.value)}>{paypalInvoiceCurrencies.map(({ code, name }) => <option key={code} value={code}>{name} ({code} · {paypalCurrencySymbol(code)})</option>)}</select></label>
               <label className="field-label full-span">Service description *<textarea rows="3" value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="Describe the work or services provided" /></label>
               <label className="field-label">Invoice date<input type="date" value={form.date} onChange={(event) => update("date", event.target.value)} /></label>
               <label className="field-label">Due date *<input type="date" value={form.due} onChange={(event) => update("due", event.target.value)} /></label>
@@ -82,7 +100,7 @@ export default function CreateInvoice() {
         </div>
         <aside className="invoice-side-note">
           <div className="side-note-icon"><FilePlus2 size={19} /></div><h3>Before you create</h3><p>PayLeak first creates a draft in PayPal Sandbox. It is not sent to the customer until you choose Send.</p>
-          <div className="side-note-rule" /><div className="side-note-row"><CheckCircle2 size={15} /><span>Confirm client details and currency</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Check your due date and description</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Review the preview before saving</span></div>
+          <div className="side-note-rule" /><div className="side-note-row"><CheckCircle2 size={15} /><span>Confirm client details and currency</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Currency availability can vary by PayPal merchant; INR is not supported directly</span></div><div className="side-note-row"><CheckCircle2 size={15} /><span>Review the preview before saving</span></div>
           {saved && <div className="saved-record"><b>Last PayPal draft</b><span>{saved.paypalId || saved.id}</span><small>Status: {saved.status}</small></div>}
         </aside>
       </div>

@@ -98,6 +98,64 @@ test("builds a single-currency PayPal invoice payload from validated invoice fie
   assert.deepEqual(payload.items[0]?.unit_amount, { currency_code: "USD", value: "200.00" });
 });
 
+test("validates PayPal invoice currencies and fractional precision before calling PayPal", async () => {
+  const { invoiceBody } = await import("../validators/invoice.js");
+  const base = {
+    client: "Jordan Lee",
+    email: "jordan@example.com",
+    amount: "200.00",
+    currency: "USD",
+    description: "Consulting services",
+    date: "2026-11-09",
+    due: "2026-11-24",
+  };
+
+  assert.equal(invoiceBody.safeParse(base).success, true);
+  assert.equal(invoiceBody.safeParse({ ...base, currency: "INR" }).success, false);
+  assert.equal(invoiceBody.safeParse({ ...base, currency: "JPY", amount: "200.50" }).success, false);
+  assert.equal(invoiceBody.safeParse({ ...base, currency: "JPY", amount: "200" }).success, true);
+});
+
+test("maps PayPal currency validation errors to a safe currency-specific response", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  const { clearPaypalTokenCache, paypalRequest } = await import("./paypalClient.js");
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/v1/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "test-token", expires_in: 3600 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      name: "INVALID_REQUEST",
+      message: "Request is not well-formed.",
+      debug_id: "SAFE-TEST-ID",
+      details: [
+        { issue: null, description: "Currency Code is not valid." },
+        { issue: null, description: "Currency Code is not valid." },
+      ],
+    }), { status: 400, headers: { "Content-Type": "application/json" } });
+  };
+  console.error = () => undefined;
+
+  try {
+    clearPaypalTokenCache();
+    await assert.rejects(
+      paypalRequest("/v2/invoicing/invoices", { method: "POST" }),
+      (error: unknown) => error instanceof Error
+        && "code" in error && error.code === "PAYPAL_CURRENCY_UNSUPPORTED"
+        && "statusCode" in error && error.statusCode === 422
+        && error.message === "This currency is not available for your PayPal account. Choose another currency."
+        && "details" in error && error.details === undefined,
+    );
+  } finally {
+    clearPaypalTokenCache();
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+  }
+});
+
 test("creates invoices through PayPal with a request ID for safe retries", async () => {
   const originalFetch = globalThis.fetch;
   const { clearPaypalTokenCache } = await import("./paypalClient.js");
